@@ -1,0 +1,47 @@
+# ============================================================================
+# Dockerfile.scratch - scratch base image (ultimate minimal image)
+# rustls + webpki-roots embeds root CAs in the binary, so no external
+# CA certificates are required for HTTPS. Produces a tiny static image.
+# ============================================================================
+
+# Stage 1: Planner
+FROM rust:1.88-alpine AS planner
+RUN apk add --no-cache musl-dev
+WORKDIR /app
+RUN cargo install cargo-chef --locked
+COPY Cargo.toml Cargo.lock ./
+RUN cargo chef prepare --recipe-path recipe.json
+
+# Stage 2: Builder (fully static musl binary)
+FROM rust:1.88-alpine AS builder
+RUN apk add --no-cache musl-dev
+WORKDIR /app
+RUN cargo install cargo-chef --locked
+COPY --from=planner /app/recipe.json recipe.json
+ENV RUSTFLAGS="-C target-feature=+crt-static"
+RUN cargo chef cook --release --recipe-path recipe.json
+
+COPY build.rs ./
+COPY src ./src
+RUN cargo build --release --bin agnes-mcp
+
+# Copy CA certificates (kept for any non-rustls TLS path; webpki-roots is embedded).
+RUN cp /etc/ssl/certs/ca-certificates.crt /app/ca-certificates.crt
+RUN strip /app/target/release/agnes-mcp
+
+# Stage 3: Runtime - scratch (empty image)
+FROM scratch
+
+COPY --from=builder /app/ca-certificates.crt /etc/ssl/certs/
+COPY --from=builder /app/target/release/agnes-mcp /agnes-mcp
+COPY config.example.toml /config.toml
+
+EXPOSE 8080
+
+ENV RUST_LOG=info
+ENV AGNES_MCP_HOST=0.0.0.0
+ENV AGNES_MCP_PORT=8080
+ENV AGNES_MCP_TRANSPORT=hybrid
+
+ENTRYPOINT ["/agnes-mcp"]
+CMD ["serve", "--config", "/config.toml"]

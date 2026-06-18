@@ -1,0 +1,53 @@
+# ============================================================================
+# Dockerfile.alpine - Alpine builder + runtime (best compatibility)
+# rustls + webpki-roots: no OpenSSL, fully static-capable binary.
+# ============================================================================
+
+# Stage 1: Planner (cargo-chef for dependency caching)
+FROM rust:1.88-alpine AS planner
+RUN apk add --no-cache musl-dev
+WORKDIR /app
+RUN cargo install cargo-chef --locked
+COPY Cargo.toml Cargo.lock ./
+RUN cargo chef prepare --recipe-path recipe.json
+
+# Stage 2: Builder
+FROM rust:1.88-alpine AS builder
+RUN apk add --no-cache musl-dev
+WORKDIR /app
+RUN cargo install cargo-chef --locked
+COPY --from=planner /app/recipe.json recipe.json
+# Pre-build dependencies for cache reuse.
+RUN cargo chef cook --release --recipe-path recipe.json
+
+COPY build.rs ./
+COPY src ./src
+RUN cargo build --release --bin agnes-mcp
+
+# Verify static linking.
+RUN ldd /app/target/release/agnes-mcp 2>/dev/null || echo "binary is statically linked"
+RUN strip /app/target/release/agnes-mcp
+
+# Stage 3: Runtime - Alpine (with shell, for easy debugging)
+FROM alpine:3.21
+
+RUN apk add --no-cache ca-certificates
+RUN adduser -D -H -u 1000 -s /bin/sh appuser
+
+WORKDIR /app
+
+COPY --from=builder /app/target/release/agnes-mcp /app/agnes-mcp
+COPY config.example.toml /app/config.toml
+
+RUN mkdir -p /app/outputs && chown -R appuser:appuser /app
+
+EXPOSE 8080
+
+ENV RUST_LOG=info
+ENV AGNES_MCP_HOST=0.0.0.0
+ENV AGNES_MCP_PORT=8080
+ENV AGNES_MCP_TRANSPORT=hybrid
+
+USER appuser
+
+CMD ["/app/agnes-mcp", "serve", "--config", "/app/config.toml"]

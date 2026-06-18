@@ -1,0 +1,85 @@
+[package]
+name = "agnes-mcp"
+version = "0.1.0"
+edition = "2021"
+description = "Agnes AI MCP server: image recognition, text-to-image, text-to-video, and more through the Agnes API"
+authors = ["KingingWang <KingingWang@foxmail.com>"]
+license = "MIT"
+repository = "https://github.com/KingingWang/agnes-mcp"
+readme = "README.md"
+keywords = ["mcp", "agnes", "ai", "image-generation", "video-generation"]
+categories = ["api-bindings", "multimedia", "command-line-utilities"]
+
+[features]
+default = ["stdio", "http", "sse"]
+stdio = ["rust-mcp-sdk/stdio"]
+http = ["rust-mcp-sdk/hyper-server", "rust-mcp-sdk/streamable-http"]
+sse = ["rust-mcp-sdk/sse"]
+
+[dependencies]
+# MCP core
+rust-mcp-sdk = { version = "0.9", default-features = false, features = ["server", "macros"] }
+
+# HTTP client (rustls for clean static/musl builds, no OpenSSL dependency)
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "webpki-roots", "http2", "charset"] }
+
+# Async runtime
+tokio = { version = "1.52", features = ["full"] }
+
+# Serialization & config
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tempfile = "3.27"
+toml = "1.1"
+
+# Error handling
+anyhow = "1.0"
+thiserror = "2.0"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Async trait
+async-trait = "0.1"
+
+# Utilities
+base64 = "0.22"
+regex-lite = "0.1"
+urlencoding = "2.1"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1.23", features = ["v4"] }
+
+# CLI
+clap = { version = "4.6", features = ["derive", "env"] }
+
+# Restore default SIGPIPE handling for the CLI (see src/main.rs)
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+tokio = { version = "1.52", features = ["full", "test-util"] }
+serde_json = "1.0"
+tempfile = "3.27"
+
+[[bin]]
+name = "agnes-mcp"
+path = "src/main.rs"
+
+[[test]]
+name = "unit"
+path = "tests/unit.rs"
+
+[profile.release]
+lto = true
+codegen-units = 1
+opt-level = 3
+strip = true
+panic = "abort"
+
+[profile.dev]
+opt-level = 0
+debug = true
+
+[build-dependencies]
+chrono = "0.4"

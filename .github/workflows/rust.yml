@@ -1,0 +1,407 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+    tags:
+      - "v*.*.*"
+  pull_request:
+    branches: [main, master]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  # Code quality: formatting + clippy (zero warnings required)
+  check:
+    name: Code Quality Checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.toml') }}
+
+      - name: Check formatting
+        run: cargo fmt -- --check
+
+      - name: Run clippy (default features)
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Run clippy (all features)
+        run: cargo clippy --all-features --all-targets -- -D warnings
+
+  # Security audit
+  security:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run cargo audit
+        run: |
+          cargo install cargo-audit
+          cargo audit
+
+  # Tests across OSes and toolchains
+  test:
+    name: Test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        rust: [stable, beta]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ matrix.rust }}
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-${{ matrix.rust }}-cargo-${{ hashFiles('**/Cargo.toml') }}
+
+      - name: Build
+        run: cargo build --verbose
+
+      - name: Test
+        run: cargo test --verbose
+
+      - name: Test with all features
+        run: cargo test --all-features --verbose
+
+  # Windows native build
+  build-windows:
+    name: Build Windows
+    runs-on: windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build
+        run: cargo build --release --all-features
+
+      - name: Verify binary
+        run: |
+          if (Test-Path target\release\agnes-mcp.exe) {
+            Write-Host "Binary compiled successfully for Windows"
+          } else {
+            Write-Error "Binary not found for Windows"
+            exit 1
+          }
+
+  # Documentation build
+  docs:
+    name: Documentation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-docs-cargo-${{ hashFiles('**/Cargo.toml') }}
+
+      - name: Build documentation
+        run: cargo doc --no-deps --all-features
+
+  # Static musl build (verifies static compilation support)
+  build-musl:
+    name: Build Static (musl)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+
+      - name: Install musl tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-musl-cargo-${{ hashFiles('**/Cargo.toml') }}
+
+      - name: Build static binary
+        run: cargo build --release --target x86_64-unknown-linux-musl
+
+      - name: Verify static linking
+        run: |
+          file target/x86_64-unknown-linux-musl/release/agnes-mcp
+          ldd target/x86_64-unknown-linux-musl/release/agnes-mcp 2>/dev/null || echo "Binary is statically linked"
+
+  # Docker image build test
+  docker:
+    name: Docker Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image
+        run: docker build -t agnes-mcp:test .
+
+      - name: Test Docker image
+        run: |
+          docker run -d --name test-container -p 8080:8080 agnes-mcp:test
+          trap 'docker logs test-container || true; docker stop test-container || true; docker rm test-container || true' EXIT
+
+          for i in $(seq 1 30); do
+            if curl -fsSI http://127.0.0.1:8080/health > /tmp/docker-health-headers.txt; then
+              break
+            fi
+            sleep 2
+          done
+
+          curl -fsSI http://127.0.0.1:8080/health | tee /tmp/docker-health-headers.txt
+          grep -Eq '^HTTP/[0-9.]+ (200|204|400|405|406)' /tmp/docker-health-headers.txt
+          docker logs test-container
+
+  # ==================== Release jobs (only on version tags) ====================
+
+  # Docker binary pre-compilation for multi-arch images
+  build-docker-binaries:
+    name: Build Docker Binaries
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [check, test, build-windows, docs, build-musl]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            arch: amd64
+            use_cross: false
+          - target: aarch64-unknown-linux-musl
+            arch: arm64
+            use_cross: true
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install musl tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+
+      - name: Install cross
+        if: matrix.use_cross
+        run: cargo install cross --git https://github.com/cross-rs/cross
+
+      - name: Build binary (native)
+        if: ${{ !matrix.use_cross }}
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Build binary (cross)
+        if: matrix.use_cross
+        run: cross build --release --target ${{ matrix.target }}
+
+      - name: Prepare binary
+        run: |
+          cp target/${{ matrix.target }}/release/agnes-mcp agnes-mcp-${{ matrix.arch }}
+          chmod +x agnes-mcp-${{ matrix.arch }}
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ matrix.arch }}
+          path: agnes-mcp-${{ matrix.arch }}
+          retention-days: 1
+
+  # Docker image publish
+  publish-docker:
+    name: Publish Docker Images
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build-docker-binaries]
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Extract version
+        id: version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Download amd64 binary
+        uses: actions/download-artifact@v4
+        with:
+          name: binary-amd64
+          path: ./binaries/amd64
+
+      - name: Download arm64 binary
+        uses: actions/download-artifact@v4
+        with:
+          name: binary-arm64
+          path: ./binaries/arm64
+
+      - name: Prepare binaries
+        run: |
+          mv ./binaries/amd64/agnes-mcp-amd64 ./agnes-mcp
+          chmod +x ./agnes-mcp
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile.release
+          push: true
+          tags: |
+            ${{ secrets.DOCKER_USERNAME }}/agnes-mcp:latest
+            ${{ secrets.DOCKER_USERNAME }}/agnes-mcp:${{ steps.version.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # Binary release to GitHub Releases
+  release:
+    name: Build and Release Binaries
+    runs-on: ${{ matrix.os }}
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [check, test, build-windows, docs, build-musl]
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            cross: false
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            cross: false
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            cross: true
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-latest
+            cross: true
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            cross: false
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            cross: false
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            cross: false
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross
+        if: matrix.cross
+        run: cargo install cross --git https://github.com/cross-rs/cross
+
+      - name: Install musl tools (Linux musl)
+        if: endsWith(matrix.target, '-musl')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+
+      - name: Build binary (native)
+        if: ${{ !matrix.cross }}
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Build binary (cross)
+        if: matrix.cross
+        run: cross build --release --target ${{ matrix.target }}
+
+      - name: Extract version
+        id: version
+        shell: bash
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Prepare binary (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          mv target/${{ matrix.target }}/release/agnes-mcp agnes-mcp-v${{ steps.version.outputs.version }}-${{ matrix.target }}
+          chmod +x agnes-mcp-v${{ steps.version.outputs.version }}-${{ matrix.target }}
+
+      - name: Prepare binary (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          mv target/${{ matrix.target }}/release/agnes-mcp.exe agnes-mcp-v${{ steps.version.outputs.version }}-${{ matrix.target }}.exe
+
+      - name: Upload release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: agnes-mcp-v${{ steps.version.outputs.version }}-${{ matrix.target }}*
+          fail_on_unmatched_files: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

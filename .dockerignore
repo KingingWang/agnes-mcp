@@ -1,0 +1,51 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# CI/CD
+.github
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+*~
+
+# Build artifacts
+target/
+Cargo.lock.orig
+
+# Documentation (keep examples/ for config)
+docs/
+*.md
+!README.md
+
+# Tests
+tests/
+
+# Logs / data
+logs/
+data/
+*.log
+outputs/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Docker files themselves
+Dockerfile*
+docker-compose*
+.dockerignore
+
+# Environment files (security)
+.env
+.env.*
+!.env.example

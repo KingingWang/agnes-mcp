@@ -1,0 +1,28 @@
+# ============================================================================
+# Dockerfile.release - Multi-arch image from pre-built static binaries.
+# Used by CI to assemble linux/amd64 + linux/arm64 images from pre-built musl
+# binaries (binaries/crates-docs-amd64, binaries/crates-docs-arm64).
+# ============================================================================
+
+FROM alpine:3.21 AS certs
+RUN apk add --no-cache ca-certificates
+
+FROM scratch
+
+# CA certificates for any non-rustls TLS path.
+COPY --from=certs /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+
+# Pre-built static binaries are injected at build time via the CI matrix.
+# The CI copies the correct arch binary to ./agnes-mcp before building.
+COPY agnes-mcp /agnes-mcp
+COPY config.example.toml /config.toml
+
+EXPOSE 8080
+
+ENV RUST_LOG=info
+ENV AGNES_MCP_HOST=0.0.0.0
+ENV AGNES_MCP_PORT=8080
+ENV AGNES_MCP_TRANSPORT=hybrid
+
+ENTRYPOINT ["/agnes-mcp"]
+CMD ["serve", "--config", "/config.toml"]

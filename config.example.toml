@@ -1,0 +1,49 @@
+# Agnes AI MCP Server Configuration
+#
+# Configuration priority (highest first):
+#   1. Command-line arguments
+#   2. Environment variables (AGNES_API_KEY / AGNES_TOKEN, AGNES_BASE_URL, AGNES_MCP_*)
+#   3. This TOML file
+#   4. Built-in defaults
+
+# =============================================================================
+# [agnes] Agnes API configuration
+# =============================================================================
+[agnes]
+# Agnes API base URL (no trailing slash).
+base_url = "https://apihub.agnes-ai.com"
+# Agnes API key. Prefer the AGNES_API_KEY environment variable over committing
+# the key here. A test key is provided for convenience.
+api_key = "sk-YOUR_API_KEY_HERE"
+# Request timeout for synchronous endpoints (chat, image), in seconds.
+request_timeout_secs = 180
+# Poll interval for asynchronous video tasks, in seconds.
+poll_interval_secs = 10
+# Poll timeout for asynchronous video tasks, in seconds.
+poll_timeout_secs = 900
+# Optional directory for downloading generated assets.
+# output_dir = "./outputs"
+
+# =============================================================================
+# [server] Server / transport configuration
+# =============================================================================
+[server]
+# Server name reported to MCP clients.
+name = "agnes-mcp"
+# Bind host. Use 0.0.0.0 to expose externally (e.g. in Docker); 127.0.0.1 for local use.
+host = "127.0.0.1"
+# Bind port (http/sse/hybrid transports).
+port = 8080
+# Transport mode: stdio, http, sse, hybrid.
+#   stdio  — for MCP client integration (Claude Desktop, Cursor, etc.)
+#   http   — Streamable HTTP
+#   sse    — Server-Sent Events
+#   hybrid — HTTP + SSE
+transport_mode = "stdio"
+
+# =============================================================================
+# [logging] Logging configuration
+# =============================================================================
+[logging]
+# Log level: trace, debug, info, warn, error.
+level = "info"

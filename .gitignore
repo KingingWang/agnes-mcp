@@ -1,0 +1,14 @@
+/target
+**/*.rs.bk
+*.pdb
+.env
+config.toml
+outputs/
+logs/
+data/
+*.log
+
+# Backup files (may contain secrets)
+*.bak
+*.orig
+*~

@@ -1,0 +1,33 @@
+# Agnes MCP Server - Docker Compose
+#
+# Usage:
+#   docker compose up --build
+#
+# Set your Agnes API key via the AGNES_API_KEY environment variable or in
+# config.toml before starting.
+
+services:
+  agnes-mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: agnes-mcp
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./config.example.toml:/app/config.toml:ro
+      - ./outputs:/app/outputs
+    environment:
+      RUST_LOG: info
+      AGNES_MCP_HOST: 0.0.0.0
+      AGNES_MCP_PORT: 8080
+      AGNES_MCP_TRANSPORT: hybrid
+      # Prefer setting the API key here rather than in the config file.
+      AGNES_API_KEY: ${AGNES_API_KEY:-}
+    restart: unless-stopped
+    networks:
+      - agnes-network
+
+networks:
+  agnes-network:
+    driver: bridge
