@@ -13,8 +13,6 @@ Built in Rust with [`rust-mcp-sdk`](https://github.com/rust-mcp-stack/rust-mcp-s
 | `agnes_generate_video` | Text-to-video, image-to-video, multi-image, and keyframe animation with `agnes-video-v2.0` (async, with optional polling). Optional `enhance_prompt` and `save_to`. |
 | `agnes_video_status` | Poll or check the status of a video generation task. Optional `save_to` to download once complete. |
 
-> **Note:** `health_check` and `agnes_enhance_prompt` are no longer registered as MCP tools. Operators can still check connectivity via the `agnes-mcp health` CLI command. AI agents diagnose service issues from tool-call errors directly.
-
 ## Quick start
 
 ### 1. Configure
@@ -30,6 +28,33 @@ Then edit `config.toml` and set your Agnes API key, or provide it via the `AGNES
 ```bash
 export AGNES_API_KEY="sk-..."
 ```
+
+#### Multiple API keys (round-robin load balancing)
+
+For higher throughput, you can supply multiple Agnes API keys. Requests are distributed evenly across all keys via a relaxed-atomic counter (no lock contention).
+
+- **TOML**: `api_keys = ["sk-1", "sk-2", "sk-3"]` (under `[agnes]`)
+- **Env**: `AGNES_API_KEYS="sk-1,sk-2,sk-3"` (comma-separated)
+- **CLI**: `--api-key sk-1 --api-key sk-2 --api-key sk-3` (repeatable flag)
+
+Keys from all sources are merged and deduped. The single-key form (`api_key`, `AGNES_API_KEY`) still works for backward compatibility; both forms can coexist.
+
+#### Retry & cooldown (automatic key failover)
+
+When an API key returns HTTP **429** (rate limited) or **401/403** (auth failure / revoked), it is automatically cooled down and the request is retried on the next healthy key:
+
+- **429** → cooldown `key_rate_limit_cooldown_secs` (default **60s**)
+- **401 / 403** → cooldown `key_cooldown_secs` (default **600s** = 10 min)
+
+Other errors (network, 5xx, other 4xx, JSON parse) **fail fast** — they are not caused by the key, so retrying on a different key wouldn't help. Configure via the `[agnes]` TOML fields `key_cooldown_secs` / `key_rate_limit_cooldown_secs`, or the `AGNES_KEY_COOLDOWN_SECS` / `AGNES_KEY_RATE_LIMIT_COOLDOWN_SECS` env vars.
+
+#### Video task affinity (important)
+
+Agnes ties each video `task_id` to the API key that created it — querying with a different key is treated as a possible **key leak** by the server. This server pins every video status query (and internal polling) to the key used at creation time. As a consequence:
+
+- A video task created in **session A** (process) cannot be queried from **session B**. You'll see: `video task '...' was not created by this server session`.
+- Video status queries are **not retried across keys**, even if the bound key is in cooldown — switching keys would break Agnes task ownership.
+- Restart the server and previously-created task IDs become unqueryable (affinity is in-process only).
 
 ### 2. Run (stdio — for MCP clients)
 
@@ -69,8 +94,8 @@ Example Claude Desktop / Cursor `mcp.json` entry:
 
 | Source | Keys |
 | --- | --- |
-| Env vars | `AGNES_API_KEY` (or `AGNES_TOKEN`), `AGNES_BASE_URL`, `AGNES_MODEL_TEXT`, `AGNES_MODEL_IMAGE`, `AGNES_MODEL_VIDEO`, `AGNES_MCP_HOST`, `AGNES_MCP_PORT`, `AGNES_MCP_TRANSPORT`, `AGNES_MCP_LOG_LEVEL` |
-| TOML `[agnes]` | `base_url`, `api_key`, `model_text`, `model_image`, `model_video`, `request_timeout_secs`, `poll_interval_secs`, `poll_timeout_secs` |
+| Env vars | `AGNES_API_KEY` (or `AGNES_TOKEN`), `AGNES_API_KEYS`, `AGNES_BASE_URL`, `AGNES_MODEL_TEXT`, `AGNES_MODEL_IMAGE`, `AGNES_MODEL_VIDEO`, `AGNES_KEY_COOLDOWN_SECS`, `AGNES_KEY_RATE_LIMIT_COOLDOWN_SECS`, `AGNES_MCP_HOST`, `AGNES_MCP_PORT`, `AGNES_MCP_TRANSPORT`, `AGNES_MCP_LOG_LEVEL` |
+| TOML `[agnes]` | `base_url`, `api_key`, `api_keys`, `model_text`, `model_image`, `model_video`, `request_timeout_secs`, `poll_interval_secs`, `poll_timeout_secs`, `key_cooldown_secs`, `key_rate_limit_cooldown_secs` |
 | TOML `[server]` | `name`, `host`, `port`, `transport_mode` |
 | TOML `[logging]` | `level` |
 

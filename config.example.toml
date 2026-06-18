@@ -15,12 +15,26 @@ base_url = "https://apihub.agnes-ai.com"
 # Agnes API key. Prefer the AGNES_API_KEY environment variable over committing
 # the key here. A test key is provided for convenience.
 api_key = "sk-YOUR_API_KEY_HERE"
+
+# Multiple Agnes API keys, used as a round-robin pool: requests are distributed
+# evenly across all keys. Useful when you have several free-tier keys to combine
+# for higher throughput. Also settable via the AGNES_API_KEYS env var
+# (comma-separated). When both api_key and api_keys are set, all keys are merged
+# and deduped.
+# api_keys = ["sk-KEY_1", "sk-KEY_2", "sk-KEY_3"]
 # Request timeout for synchronous endpoints (chat, image), in seconds.
 request_timeout_secs = 180
 # Poll interval for asynchronous video tasks, in seconds.
 poll_interval_secs = 10
 # Poll timeout for asynchronous video tasks, in seconds.
 poll_timeout_secs = 900
+# Cooldown (seconds) applied to an API key after an authentication failure
+# (HTTP 401/403). The key is skipped by the round-robin selector until the
+# cooldown elapses. Defaults to 600 seconds (10 minutes).
+# key_cooldown_secs = 600
+# Cooldown (seconds) applied to an API key after a rate-limit response (HTTP 429).
+# Defaults to 60 seconds.
+# key_rate_limit_cooldown_secs = 60
 # Optional directory for downloading generated assets.
 # output_dir = "./outputs"
 

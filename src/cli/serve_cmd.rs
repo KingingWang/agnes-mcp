@@ -10,9 +10,19 @@ fn apply_cli_overrides(config: &mut AppConfig, args: &ServeArgs) {
     if let Some(base) = &args.base_url {
         config.agnes.base_url = base.trim_end_matches('/').to_string();
     }
-    if let Some(key) = &args.api_key {
-        if !key.is_empty() {
-            config.agnes.api_key = Some(key.clone());
+    // CLI keys merge into the multi-key pool (in addition to env/TOML sources).
+    // Effective keys are deduped later by `AgnesConfig::effective_api_keys`.
+    if !args.api_key.is_empty() {
+        let trimmed: Vec<String> = args
+            .api_key
+            .iter()
+            .map(|k| k.trim().to_string())
+            .filter(|k| !k.is_empty())
+            .collect();
+        if !trimmed.is_empty() {
+            let mut merged = config.agnes.api_keys.clone().unwrap_or_default();
+            merged.extend(trimmed);
+            config.agnes.api_keys = Some(merged);
         }
     }
     if let Some(mode) = &args.mode {

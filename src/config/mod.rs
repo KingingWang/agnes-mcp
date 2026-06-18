@@ -52,16 +52,32 @@ impl AppConfig {
     /// Apply environment-variable overrides in place.
     ///
     /// Recognized variables:
+    /// - `AGNES_API_KEYS`               → `agnes.api_keys` (comma-separated multi-key pool)
     /// - `AGNES_API_KEY` / `AGNES_TOKEN` → `agnes.api_key`
     /// - `AGNES_BASE_URL`               → `agnes.base_url`
     /// - `AGNES_MCP_HOST`               → `server.host`
     /// - `AGNES_MCP_PORT`               → `server.port`
     /// - `AGNES_MCP_TRANSPORT`          → `server.transport_mode`
+    /// - `AGNES_KEY_COOLDOWN_SECS`      → `agnes.key_cooldown_secs`
+    /// - `AGNES_KEY_RATE_LIMIT_COOLDOWN_SECS` → `agnes.key_rate_limit_cooldown_secs`
     /// - `AGNES_MCP_LOG_LEVEL`          → `logging.level`
     /// - `AGNES_MODEL_TEXT`             → `agnes.model_text`
     /// - `AGNES_MODEL_IMAGE`            → `agnes.model_image`
     /// - `AGNES_MODEL_VIDEO`            → `agnes.model_video`
     pub fn apply_env(&mut self) {
+        // Multi-key support: AGNES_API_KEYS (comma-separated) takes precedence for
+        // the multi-key pool. AGNES_API_KEY still works for single-key setups.
+        if let Ok(keys_str) = std::env::var("AGNES_API_KEYS") {
+            if !keys_str.is_empty() {
+                self.agnes.api_keys = Some(
+                    keys_str
+                        .split(',')
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect(),
+                );
+            }
+        }
         if let Ok(key) = std::env::var("AGNES_API_KEY").or_else(|_| std::env::var("AGNES_TOKEN")) {
             if !key.is_empty() {
                 self.agnes.api_key = Some(key);
@@ -85,6 +101,16 @@ impl AppConfig {
         if let Ok(mode) = std::env::var("AGNES_MCP_TRANSPORT") {
             if !mode.is_empty() {
                 self.server.transport_mode = mode;
+            }
+        }
+        if let Ok(secs) = std::env::var("AGNES_KEY_COOLDOWN_SECS") {
+            if let Ok(parsed) = secs.trim().parse::<u64>() {
+                self.agnes.key_cooldown_secs = parsed;
+            }
+        }
+        if let Ok(secs) = std::env::var("AGNES_KEY_RATE_LIMIT_COOLDOWN_SECS") {
+            if let Ok(parsed) = secs.trim().parse::<u64>() {
+                self.agnes.key_rate_limit_cooldown_secs = parsed;
             }
         }
         if let Ok(level) = std::env::var("AGNES_MCP_LOG_LEVEL") {
@@ -116,17 +142,9 @@ impl AppConfig {
     ///
     /// Returns an error if the API key is missing or the base URL is invalid.
     pub fn validate(&self) -> Result<()> {
-        if self
-            .agnes
-            .api_key
-            .as_deref()
-            .unwrap_or_default()
-            .trim()
-            .is_empty()
-        {
+        if self.agnes.effective_api_keys().is_empty() {
             return Err(Error::config(
-                "agnes.api_key is required. Set it in config.toml, the AGNES_API_KEY env var, \
-                 or pass --api-key.",
+                "agnes.api_key / agnes.api_keys is required. Set it in config.toml,                  the AGNES_API_KEY / AGNES_API_KEYS env var, or pass --api-key.",
             ));
         }
         if !self.agnes.base_url.starts_with("http://")
@@ -148,10 +166,19 @@ pub struct AgnesConfig {
     #[serde(default = "default_base_url")]
     pub base_url: String,
 
-    /// Agnes API key. Prefer setting via the `AGNES_API_KEY` environment
-    /// variable rather than committing it to the config file.
+    /// Agnes API key. Accepts a single key or a comma-separated list (e.g.
+    /// `"sk-1, sk-2"`), which is split into multiple pool entries — see
+    /// [`AgnesConfig::effective_api_keys`]. Prefer setting via the
+    /// `AGNES_API_KEY` environment variable rather than committing it to the
+    /// config file.
     #[serde(default)]
     pub api_key: Option<String>,
+
+    /// Multiple Agnes API keys used as a round-robin pool. Requests are
+    /// distributed evenly across all keys. Set via the `api_keys` TOML field
+    /// or the `AGNES_API_KEYS` environment variable (comma-separated).
+    #[serde(default)]
+    pub api_keys: Option<Vec<String>>,
 
     /// Request timeout in seconds for synchronous endpoints (chat, image).
     #[serde(default = "default_request_timeout")]
@@ -164,6 +191,17 @@ pub struct AgnesConfig {
     /// Default poll timeout in seconds for asynchronous video tasks.
     #[serde(default = "default_poll_timeout")]
     pub poll_timeout_secs: f64,
+
+    /// Cooldown in seconds applied to an API key after an authentication
+    /// failure (HTTP 401/403). The key is skipped by the round-robin selector
+    /// until the cooldown elapses. Defaults to 600 seconds (10 minutes).
+    #[serde(default = "default_key_cooldown")]
+    pub key_cooldown_secs: u64,
+
+    /// Cooldown in seconds applied to an API key after a rate-limit response
+    /// (HTTP 429). Defaults to 60 seconds.
+    #[serde(default = "default_key_rate_limit_cooldown")]
+    pub key_rate_limit_cooldown_secs: u64,
 
     /// Agnes chat/text model identifier. Defaults to `MODEL_TEXT`.
     #[serde(default = "default_model_text")]
@@ -190,6 +228,14 @@ const fn default_poll_timeout() -> f64 {
     900.0
 }
 
+const fn default_key_cooldown() -> u64 {
+    600
+}
+
+const fn default_key_rate_limit_cooldown() -> u64 {
+    60
+}
+
 fn default_base_url() -> String {
     DEFAULT_AGNES_BASE_URL.to_string()
 }
@@ -214,9 +260,12 @@ impl Default for AgnesConfig {
         Self {
             base_url: default_base_url(),
             api_key: None,
+            api_keys: None,
             request_timeout_secs: default_request_timeout(),
             poll_interval_secs: default_poll_interval(),
             poll_timeout_secs: default_poll_timeout(),
+            key_cooldown_secs: default_key_cooldown(),
+            key_rate_limit_cooldown_secs: default_key_rate_limit_cooldown(),
             model_text: default_model_text(),
             model_image: default_model_image(),
             model_video: default_model_video(),
@@ -225,16 +274,46 @@ impl Default for AgnesConfig {
 }
 
 impl AgnesConfig {
-    /// Returns the configured API key, or an error if missing.
+    /// Merge all configured API keys into a single deduped pool.
+    ///
+    /// Sources (in order, all merged — not override semantics):
+    /// 1. `agnes.api_keys` (TOML array) or `AGNES_API_KEYS` env (comma-separated)
+    /// 2. `agnes.api_key` (TOML scalar) or `AGNES_API_KEY` env, or CLI `--api-key`.
+    ///    The scalar form also accepts comma-separated entries for convenience.
+    ///
+    /// Empty strings and duplicates are dropped; the first occurrence wins.
+    #[must_use]
+    pub fn effective_api_keys(&self) -> Vec<String> {
+        let mut keys: Vec<String> = Vec::new();
+        if let Some(list) = &self.api_keys {
+            keys.extend(list.iter().cloned());
+        }
+        if let Some(single) = &self.api_key {
+            keys.extend(single.split(',').map(|s| s.trim().to_string()));
+        }
+        let mut seen = std::collections::HashSet::new();
+        // Trim each key, drop empties (including whitespace-only), dedup
+        // preserving first-occurrence order.
+        keys = keys
+            .into_iter()
+            .map(|k| k.trim().to_string())
+            .filter(|k| !k.is_empty())
+            .collect();
+        keys.retain(|k| seen.insert(k.clone()));
+        keys
+    }
+
+    /// Returns the merged, deduped list of API keys, or an error if empty.
     ///
     /// # Errors
     ///
     /// Returns a configuration error if no API key is set.
-    pub fn require_api_key(&self) -> Result<String> {
-        self.api_key
-            .clone()
-            .filter(|k| !k.trim().is_empty())
-            .ok_or_else(|| Error::config("agnes.api_key is not set"))
+    pub fn require_api_keys(&self) -> Result<Vec<String>> {
+        let keys = self.effective_api_keys();
+        if keys.is_empty() {
+            return Err(Error::config("agnes.api_key / agnes.api_keys is not set"));
+        }
+        Ok(keys)
     }
 }
 
@@ -410,5 +489,129 @@ mod tests {
         std::env::remove_var("AGNES_MODEL_TEXT");
         std::env::remove_var("AGNES_MODEL_IMAGE");
         std::env::remove_var("AGNES_MODEL_VIDEO");
+    }
+
+    #[test]
+    fn effective_api_keys_single() {
+        let cfg = AgnesConfig {
+            api_key: Some("sk-1".to_string()),
+            ..AgnesConfig::default()
+        };
+        assert_eq!(cfg.effective_api_keys(), vec!["sk-1".to_string()]);
+    }
+
+    #[test]
+    fn effective_api_keys_comma_separated() {
+        let cfg = AgnesConfig {
+            api_key: Some("sk-1, sk-2 , sk-3".to_string()),
+            ..AgnesConfig::default()
+        };
+        assert_eq!(
+            cfg.effective_api_keys(),
+            vec!["sk-1".to_string(), "sk-2".to_string(), "sk-3".to_string()]
+        );
+    }
+
+    #[test]
+    fn effective_api_keys_dedup_preserves_order() {
+        let cfg = AgnesConfig {
+            api_keys: Some(vec!["sk-1".to_string(), "sk-2".to_string()]),
+            api_key: Some("sk-2, sk-3".to_string()),
+            ..AgnesConfig::default()
+        };
+        assert_eq!(
+            cfg.effective_api_keys(),
+            vec!["sk-1".to_string(), "sk-2".to_string(), "sk-3".to_string()]
+        );
+    }
+
+    #[test]
+    fn effective_api_keys_filters_empty() {
+        let cfg = AgnesConfig {
+            api_keys: Some(vec![
+                "sk-1".to_string(),
+                String::new(),
+                "  ".to_string(),
+                "sk-2".to_string(),
+            ]),
+            ..AgnesConfig::default()
+        };
+        assert_eq!(
+            cfg.effective_api_keys(),
+            vec!["sk-1".to_string(), "sk-2".to_string()]
+        );
+    }
+
+    #[test]
+    fn effective_api_keys_empty_when_unconfigured() {
+        let cfg = AgnesConfig::default();
+        assert!(cfg.effective_api_keys().is_empty());
+    }
+
+    #[test]
+    fn require_api_keys_errors_when_empty() {
+        let cfg = AgnesConfig::default();
+        assert!(cfg.require_api_keys().is_err());
+    }
+
+    #[test]
+    fn require_api_keys_ok_with_pool() {
+        let cfg = AgnesConfig {
+            api_keys: Some(vec!["sk-1".to_string(), "sk-2".to_string()]),
+            ..AgnesConfig::default()
+        };
+        assert_eq!(cfg.require_api_keys().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn validate_accepts_api_keys() {
+        let mut cfg = AppConfig::default();
+        cfg.agnes.api_keys = Some(vec!["sk-1".to_string(), "sk-2".to_string()]);
+        assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn env_multi_keys_overrides() {
+        std::env::set_var("AGNES_API_KEYS", "sk-a, sk-b , sk-c");
+        let mut cfg = AppConfig::default();
+        cfg.apply_env();
+        let expected: Vec<String> = ["sk-a", "sk-b", "sk-c"]
+            .iter()
+            .map(|s| (*s).to_string())
+            .collect();
+        assert_eq!(cfg.agnes.api_keys, Some(expected));
+        std::env::remove_var("AGNES_API_KEYS");
+    }
+
+    #[test]
+    fn default_cooldowns_match_constants() {
+        let cfg = AgnesConfig::default();
+        assert_eq!(cfg.key_cooldown_secs, 600);
+        assert_eq!(cfg.key_rate_limit_cooldown_secs, 60);
+    }
+
+    #[test]
+    fn parse_config_with_cooldowns() {
+        let f = temp_config(concat!(
+            "[agnes]\n",
+            "api_key = \"sk-test\"\n",
+            "key_cooldown_secs = 120\n",
+            "key_rate_limit_cooldown_secs = 30\n",
+        ));
+        let cfg = AppConfig::from_file(f.path()).unwrap();
+        assert_eq!(cfg.agnes.key_cooldown_secs, 120);
+        assert_eq!(cfg.agnes.key_rate_limit_cooldown_secs, 30);
+    }
+
+    #[test]
+    fn env_overrides_cooldowns() {
+        std::env::set_var("AGNES_KEY_COOLDOWN_SECS", "999");
+        std::env::set_var("AGNES_KEY_RATE_LIMIT_COOLDOWN_SECS", "111");
+        let mut cfg = AppConfig::default();
+        cfg.apply_env();
+        assert_eq!(cfg.agnes.key_cooldown_secs, 999);
+        assert_eq!(cfg.agnes.key_rate_limit_cooldown_secs, 111);
+        std::env::remove_var("AGNES_KEY_COOLDOWN_SECS");
+        std::env::remove_var("AGNES_KEY_RATE_LIMIT_COOLDOWN_SECS");
     }
 }

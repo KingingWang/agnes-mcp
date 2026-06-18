@@ -233,7 +233,7 @@ impl Tool for GenerateVideoTool {
 
         let body = Self::build_body(&params, self.client.video_model(), &effective_prompt);
 
-        let response = self.client.create_video_task(&body).await.map_err(|e| {
+        let (response, key_idx) = self.client.create_video_task(&body).await.map_err(|e| {
             CallToolError::from_message(format!("Agnes video creation failed: {e}"))
         })?;
 
@@ -251,6 +251,11 @@ impl Tool for GenerateVideoTool {
             }
             return Ok(CallToolResult::text_content(vec![msg.into()]));
         };
+
+        // Pin this task to the key that created it, so all subsequent status
+        // queries (via agnes_video_status or internal polling) reuse the same
+        // key. Agnes ties task ownership to the creating key.
+        self.client.record_task_key(&task_id, key_idx);
 
         let image_count = params.image_urls.as_ref().map_or(0, Vec::len);
         let mode_label = match (params.mode.as_deref(), image_count) {

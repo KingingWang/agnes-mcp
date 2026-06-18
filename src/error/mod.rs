@@ -16,6 +16,18 @@ pub enum Error {
     #[error("agnes api error: {0}")]
     Api(String),
 
+    /// Agnes API returned a non-2xx response with a known HTTP status code.
+    ///
+    /// Used internally by the retry layer to inspect the status (429 rate
+    /// limit, 401/403 auth failure) and apply per-key cooldowns.
+    #[error("agnes api error (HTTP {status}): {message}")]
+    ApiStatus {
+        /// HTTP status code returned by the API.
+        status: u16,
+        /// Human-readable error message extracted from the response body.
+        message: String,
+    },
+
     /// HTTP / network transport error talking to the Agnes API.
     #[error("http error: {0}")]
     Http(String),
@@ -58,6 +70,18 @@ impl Error {
     #[must_use]
     pub fn api(msg: impl Into<String>) -> Self {
         Self::Api(msg.into())
+    }
+
+    /// Create an Agnes API error with a known HTTP status code.
+    ///
+    /// The status is used by the multi-key retry layer to decide whether to
+    /// cool the offending key down (401/403/429) or fail fast (other 4xx).
+    #[must_use]
+    pub fn api_status(status: u16, msg: impl Into<String>) -> Self {
+        Self::ApiStatus {
+            status,
+            message: msg.into(),
+        }
     }
 
     /// Create an HTTP/network error.

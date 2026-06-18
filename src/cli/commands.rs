@@ -40,9 +40,11 @@ pub struct ServeArgs {
     #[arg(long, env = "AGNES_BASE_URL")]
     pub base_url: Option<String>,
 
-    /// Agnes API key (prefer the AGNES_API_KEY env var).
-    #[arg(long, env = "AGNES_API_KEY")]
-    pub api_key: Option<String>,
+    /// Agnes API key. Repeatable (`--api-key sk-1 --api-key sk-2`) to build a
+    /// round-robin pool. Falls back to the `AGNES_API_KEY` env var when no
+    /// flag is passed.
+    #[arg(long, env = "AGNES_API_KEY", action = clap::ArgAction::Append)]
+    pub api_key: Vec<String>,
 
     /// Transport mode: stdio, http, sse, hybrid.
     #[arg(short, long, env = "AGNES_MCP_TRANSPORT")]
