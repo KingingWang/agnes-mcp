@@ -74,7 +74,7 @@ impl AgnesServer {
             },
             protocol_version: ProtocolVersion::V2025_11_25.into(),
             instructions: Some(
-                "Use this server to access Agnes AI free models: agnes_chat (text), \
+                "Use this server to access Agnes AI free models: \
                  agnes_image_recognition (vision), agnes_generate_image (text-to-image & \
                  image-to-image), agnes_generate_video (text-to-video & image-to-video & \
                  keyframes), and agnes_video_status."

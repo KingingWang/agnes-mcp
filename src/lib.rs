@@ -2,8 +2,8 @@
 //!
 //! A Model Context Protocol server exposing the Agnes AI free models:
 //!
-//! - **agnes-2.0-flash** — chat completions and multimodal image recognition
-//!   (vision) via an OpenAI-compatible endpoint.
+//! - **agnes-2.0-flash** — multimodal image recognition (vision) and internal
+//!   prompt enhancement via an OpenAI-compatible endpoint.
 //! - **agnes-image-2.1-flash** — text-to-image and image-to-image generation.
 //! - **agnes-video-v2.0** — text-to-video, image-to-video, multi-image and
 //!   keyframe video generation (asynchronous tasks with polling).

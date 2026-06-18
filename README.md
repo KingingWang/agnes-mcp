@@ -1,6 +1,6 @@
 # agnes-mcp
 
-A [Model Context Protocol](https://modelcontextprotocol.io) server that exposes the **Agnes AI** free models — image recognition, text generation, text-to-image, image-to-image, text-to-video, image-to-video, and keyframe animation — to any MCP-compatible client (Claude Desktop, Cursor, etc.).
+A [Model Context Protocol](https://modelcontextprotocol.io) server that exposes the **Agnes AI** free models — image recognition, text-to-image, image-to-image, text-to-video, image-to-video, and keyframe animation — to any MCP-compatible client (Claude Desktop, Cursor, etc.).
 
 Built in Rust with [`rust-mcp-sdk`](https://github.com/rust-mcp-stack/rust-mcp-sdk), statically compilable, Docker-ready, and zero-warning clean.
 
@@ -8,7 +8,6 @@ Built in Rust with [`rust-mcp-sdk`](https://github.com/rust-mcp-stack/rust-mcp-s
 
 | Tool | Description |
 | --- | --- |
-| `agnes_chat` | Text generation / chat completions with `agnes-2.0-flash` (system prompts, history, temperature `0.0`–`2.0`). |
 | `agnes_image_recognition` | Vision / image understanding — describe, analyze, and answer questions about images. Accepts URLs, local files, or base64. Optional `detail`: `low` / `high` / `auto`. |
 | `agnes_generate_image` | Text-to-image and image-to-image with `agnes-image-2.1-flash`. Optional `enhance_prompt` (expand prompt before generation) and `save_to` (download to local path). |
 | `agnes_generate_video` | Text-to-video, image-to-video, multi-image, and keyframe animation with `agnes-video-v2.0` (async, with optional polling). Optional `enhance_prompt` and `save_to`. |
@@ -149,7 +148,6 @@ src/
   server/              AgnesServer, MCP handler, transports
   tools/               MCP tools + shared Agnes HTTP client
     agnes_client.rs    Agnes API client (chat / image / video)
-    chat.rs            agnes_chat
     image_recognition.rs  agnes_image_recognition
     image.rs           agnes_generate_image
     video.rs           agnes_generate_video + agnes_video_status

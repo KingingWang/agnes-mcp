@@ -303,26 +303,6 @@ pub fn extract_chat_text(response: &serde_json::Value) -> Option<String> {
         .map(String::from)
 }
 
-/// A textual description of the token usage in a chat completion response.
-#[must_use]
-pub fn extract_usage_summary(response: &serde_json::Value) -> Option<String> {
-    let usage = response.get("usage")?;
-    let pt = usage
-        .get("prompt_tokens")
-        .and_then(serde_json::Value::as_u64);
-    let ct = usage
-        .get("completion_tokens")
-        .and_then(serde_json::Value::as_u64);
-    let total = usage
-        .get("total_tokens")
-        .and_then(serde_json::Value::as_u64);
-    Some(format!(
-        "prompt={}, completion={}, total={}",
-        pt.unwrap_or(0),
-        ct.unwrap_or(0),
-        total.unwrap_or(0)
-    ))
-}
 
 /// Recursively collect all `http(s)://` URLs found under `url`/`image_url`
 /// keys in a JSON value.
@@ -513,12 +493,4 @@ mod tests {
         assert_eq!(extract_error_message(&v).as_deref(), Some("rate limited"));
     }
 
-    #[test]
-    fn usage_summary() {
-        let resp = serde_json::json!({"usage": {"prompt_tokens": 5, "completion_tokens": 7, "total_tokens": 12}});
-        assert_eq!(
-            extract_usage_summary(&resp).as_deref(),
-            Some("prompt=5, completion=7, total=12")
-        );
-    }
 }

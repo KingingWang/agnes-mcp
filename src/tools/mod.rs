@@ -1,7 +1,6 @@
 //! MCP tool definitions for the Agnes AI models.
 //!
 //! Tools provided:
-//! - [`chat`] — `agnes_chat` text/chat completions
 //! - [`image`] — `agnes_generate_image` (text-to-image & image-to-image)
 //! - [`image_recognition`] — `agnes_image_recognition` (vision / image understanding)
 //! - [`video`] — `agnes_generate_video` and `agnes_video_status`
@@ -10,7 +9,6 @@
 //! - [`health`] — CLI-only health check (NOT an MCP tool)
 
 pub mod agnes_client;
-pub mod chat;
 pub mod health;
 pub mod image;
 pub mod image_recognition;
@@ -116,7 +114,6 @@ pub fn create_default_registry(config: &AgnesConfig) -> Result<ToolRegistry> {
     let client = Arc::new(AgnesClient::new(config)?);
 
     Ok(ToolRegistry::new()
-        .register(chat::ChatTool::new(client.clone()))
         .register(image_recognition::ImageRecognitionTool::new(client.clone()))
         .register(image::GenerateImageTool::new(client.clone()))
         .register(video::GenerateVideoTool::new(client.clone()))
