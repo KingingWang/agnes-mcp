@@ -3,10 +3,11 @@
 //! Wraps [`reqwest`] with the Agnes base URL, API key, and timeouts, and
 //! normalizes error responses returned by the API.
 
-use crate::config::{AgnesConfig, MODEL_IMAGE, MODEL_TEXT, MODEL_VIDEO};
+use crate::config::AgnesConfig;
 use crate::error::{Error, Result};
 use reqwest::{Client, Method};
 use serde::Serialize;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 /// Asynchronous client for the Agnes AI API.
@@ -17,6 +18,9 @@ pub struct AgnesClient {
     http: Client,
     poll_interval: Duration,
     poll_timeout: Duration,
+    model_text: String,
+    model_image: String,
+    model_video: String,
 }
 
 impl AgnesClient {
@@ -41,25 +45,28 @@ impl AgnesClient {
             http,
             poll_interval: Duration::from_secs_f64(config.poll_interval_secs.max(1.0)),
             poll_timeout: Duration::from_secs_f64(config.poll_timeout_secs.max(1.0)),
+            model_text: config.model_text.clone(),
+            model_image: config.model_image.clone(),
+            model_video: config.model_video.clone(),
         })
     }
 
-    /// The chat/text model identifier.
+    /// The configured chat/text model identifier.
     #[must_use]
-    pub fn text_model() -> &'static str {
-        MODEL_TEXT
+    pub fn text_model(&self) -> &str {
+        &self.model_text
     }
 
-    /// The image model identifier.
+    /// The configured image model identifier.
     #[must_use]
-    pub fn image_model() -> &'static str {
-        MODEL_IMAGE
+    pub fn image_model(&self) -> &str {
+        &self.model_image
     }
 
-    /// The video model identifier.
+    /// The configured video model identifier.
     #[must_use]
-    pub fn video_model() -> &'static str {
-        MODEL_VIDEO
+    pub fn video_model(&self) -> &str {
+        &self.model_video
     }
 
     /// The configured poll interval for async tasks.
@@ -165,6 +172,53 @@ impl AgnesClient {
         let path = urlencoding::encode(task_id);
         let path = format!("/v1/videos/{path}");
         self.request_json(Method::GET, &path, None).await
+    }
+
+    /// Download a URL to a local file. Returns the absolute path written.
+    ///
+    /// Reuses the configured HTTP client (timeouts, user agent). Creates the
+    /// parent directory if it does not exist.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the URL is not `http(s)://`, the request fails, the
+    /// status is not 2xx, or the file cannot be written.
+    pub async fn download_url(&self, url: &str, dest: &Path) -> Result<PathBuf> {
+        if !url.starts_with("http://") && !url.starts_with("https://") {
+            return Err(Error::config(format!(
+                "download_url requires an http(s) URL, got: {url}"
+            )));
+        }
+        if let Some(parent) = dest.parent() {
+            if !parent.as_os_str().is_empty() {
+                tokio::fs::create_dir_all(parent).await.map_err(|e| {
+                    Error::config(format!("failed to create dir {}: {e}", parent.display()))
+                })?;
+            }
+        }
+        let response = self
+            .http
+            .get(url)
+            .send()
+            .await
+            .map_err(|e| Error::http(format!("download from {url} failed: {e}")))?;
+        let status = response.status();
+        let bytes = response
+            .bytes()
+            .await
+            .map_err(|e| Error::http(format!("failed to read download body: {e}")))?;
+        if !status.is_success() {
+            return Err(Error::http(format!(
+                "download from {url} returned HTTP {status}"
+            )));
+        }
+        tokio::fs::write(dest, &bytes)
+            .await
+            .map_err(|e| Error::config(format!("failed to write {}: {e}", dest.display())))?;
+        let abs = dest.canonicalize().map_err(|e| {
+            Error::config(format!("failed to canonicalize {}: {e}", dest.display()))
+        })?;
+        Ok(abs)
     }
 }
 

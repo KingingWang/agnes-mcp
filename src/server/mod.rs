@@ -77,7 +77,7 @@ impl AgnesServer {
                 "Use this server to access Agnes AI free models: agnes_chat (text), \
                  agnes_image_recognition (vision), agnes_generate_image (text-to-image & \
                  image-to-image), agnes_generate_video (text-to-video & image-to-video & \
-                 keyframes), agnes_video_status, agnes_enhance_prompt, and health_check."
+                 keyframes), and agnes_video_status."
                     .to_string(),
             ),
             meta: None,

@@ -55,6 +55,18 @@ pub struct ServeArgs {
     /// Listen port (http/sse/hybrid).
     #[arg(short, long, env = "AGNES_MCP_PORT")]
     pub port: Option<u16>,
+
+    /// Agnes chat/text model identifier.
+    #[arg(long, env = "AGNES_MODEL_TEXT")]
+    pub model_text: Option<String>,
+
+    /// Agnes image generation model identifier.
+    #[arg(long, env = "AGNES_MODEL_IMAGE")]
+    pub model_image: Option<String>,
+
+    /// Agnes video generation model identifier.
+    #[arg(long, env = "AGNES_MODEL_VIDEO")]
+    pub model_video: Option<String>,
 }
 
 /// Arguments for the `health` command.

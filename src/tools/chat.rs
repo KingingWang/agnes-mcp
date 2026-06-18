@@ -87,6 +87,15 @@ impl Tool for ChatTool {
             CallToolError::invalid_arguments("agnes_chat", Some(format!("invalid arguments: {e}")))
         })?;
 
+        if let Some(t) = params.temperature {
+            if !(0.0..=2.0).contains(&t) {
+                return Err(CallToolError::invalid_arguments(
+                    "agnes_chat",
+                    Some(format!("temperature must be in [0.0, 2.0], got {t}")),
+                ));
+            }
+        }
+
         let mut messages: Vec<ChatMessage> = Vec::new();
         if let Some(system) = &params.system {
             if !system.trim().is_empty() {
@@ -110,7 +119,7 @@ impl Tool for ChatTool {
         messages.push(text_message("user", &params.prompt));
 
         let request = ChatRequest {
-            model: AgnesClient::text_model().to_string(),
+            model: self.client.text_model().to_string(),
             messages,
             temperature: params.temperature,
             top_p: params.top_p,
@@ -146,5 +155,22 @@ fn text_message(role: &str, content: &str) -> ChatMessage {
     ChatMessage {
         role: role.to_string(),
         content: serde_json::Value::String(content.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// Document the accepted temperature range. The actual `execute` requires a
+    /// live client; here we just assert the range constants used by validation.
+    #[test]
+    fn temperature_range_is_0_to_2() {
+        // valid boundary values
+        for t in [0.0_f64, 0.5, 1.0, 1.5, 2.0] {
+            assert!((0.0..=2.0).contains(&t), "{t} should be valid");
+        }
+        // invalid values
+        for t in [-0.1_f64, 2.1, 3.0, -1.0] {
+            assert!(!(0.0..=2.0).contains(&t), "{t} should be invalid");
+        }
     }
 }

@@ -8,13 +8,13 @@ Built in Rust with [`rust-mcp-sdk`](https://github.com/rust-mcp-stack/rust-mcp-s
 
 | Tool | Description |
 | --- | --- |
-| `agnes_chat` | Text generation / chat completions with `agnes-2.0-flash` (system prompts, history, temperature). |
-| `agnes_image_recognition` | Vision / image understanding — describe, analyze, and answer questions about images. Accepts URLs, local files, or base64. |
-| `agnes_generate_image` | Text-to-image and image-to-image with `agnes-image-2.1-flash`. |
-| `agnes_generate_video` | Text-to-video, image-to-video, multi-image, and keyframe animation with `agnes-video-v2.0` (async, with optional polling). |
-| `agnes_video_status` | Poll or check the status of a video generation task. |
-| `agnes_enhance_prompt` | Expand a simple idea into a rich, detailed generation prompt (for image or video). |
-| `health_check` | Verify connectivity and authentication with the Agnes API. |
+| `agnes_chat` | Text generation / chat completions with `agnes-2.0-flash` (system prompts, history, temperature `0.0`–`2.0`). |
+| `agnes_image_recognition` | Vision / image understanding — describe, analyze, and answer questions about images. Accepts URLs, local files, or base64. Optional `detail`: `low` / `high` / `auto`. |
+| `agnes_generate_image` | Text-to-image and image-to-image with `agnes-image-2.1-flash`. Optional `enhance_prompt` (expand prompt before generation) and `save_to` (download to local path). |
+| `agnes_generate_video` | Text-to-video, image-to-video, multi-image, and keyframe animation with `agnes-video-v2.0` (async, with optional polling). Optional `enhance_prompt` and `save_to`. |
+| `agnes_video_status` | Poll or check the status of a video generation task. Optional `save_to` to download once complete. |
+
+> **Note:** `health_check` and `agnes_enhance_prompt` are no longer registered as MCP tools. Operators can still check connectivity via the `agnes-mcp health` CLI command. AI agents diagnose service issues from tool-call errors directly.
 
 ## Quick start
 
@@ -70,12 +70,26 @@ Example Claude Desktop / Cursor `mcp.json` entry:
 
 | Source | Keys |
 | --- | --- |
-| Env vars | `AGNES_API_KEY` (or `AGNES_TOKEN`), `AGNES_BASE_URL`, `AGNES_MCP_HOST`, `AGNES_MCP_PORT`, `AGNES_MCP_TRANSPORT`, `AGNES_MCP_LOG_LEVEL` |
-| TOML `[agnes]` | `base_url`, `api_key`, `request_timeout_secs`, `poll_interval_secs`, `poll_timeout_secs`, `output_dir` |
+| Env vars | `AGNES_API_KEY` (or `AGNES_TOKEN`), `AGNES_BASE_URL`, `AGNES_MODEL_TEXT`, `AGNES_MODEL_IMAGE`, `AGNES_MODEL_VIDEO`, `AGNES_MCP_HOST`, `AGNES_MCP_PORT`, `AGNES_MCP_TRANSPORT`, `AGNES_MCP_LOG_LEVEL` |
+| TOML `[agnes]` | `base_url`, `api_key`, `model_text`, `model_image`, `model_video`, `request_timeout_secs`, `poll_interval_secs`, `poll_timeout_secs` |
 | TOML `[server]` | `name`, `host`, `port`, `transport_mode` |
 | TOML `[logging]` | `level` |
 
 See [`config.example.toml`](config.example.toml) for a fully commented example.
+
+## Tool parameters
+
+### Configurable models
+
+The Agnes model identifiers can be overridden via the `[agnes]` TOML section (`model_text`, `model_image`, `model_video`), the `AGNES_MODEL_TEXT` / `AGNES_MODEL_IMAGE` / `AGNES_MODEL_VIDEO` environment variables, or the `--model-text` / `--model-image` / `--model-video` CLI flags. Defaults match the Agnes free-tier models (`agnes-2.0-flash`, `agnes-image-2.1-flash`, `agnes-video-v2.0`).
+
+### `enhance_prompt` (image / video generation)
+
+Both `agnes_generate_image` and `agnes_generate_video` accept an optional `enhance_prompt` boolean (default `false`). When `true`, the chat model first expands the prompt into a rich, detailed generation prompt (subject + scene + style + lighting + composition + quality) before generation. This **adds one extra chat-model round trip (~1–5s)** — leave it `false` if your prompt is already detailed. On enhancement failure, generation falls back to the original prompt and a warning is appended to the output. When successful, the enhanced prompt is echoed for observability.
+
+### `save_to` (image / video download)
+
+`agnes_generate_image`, `agnes_generate_video`, and `agnes_video_status` accept an optional `save_to` path. When set, the generated asset is downloaded to that local path (a directory for multiple images, or a file path for a single file). For video generation, downloading only happens when the task has completed (`wait=true` on `agnes_generate_video`, or via `agnes_video_status` polling). Download failures are reported in the output but do not suppress the returned URL.
 
 ## CLI
 
@@ -139,8 +153,8 @@ src/
     image_recognition.rs  agnes_image_recognition
     image.rs           agnes_generate_image
     video.rs           agnes_generate_video + agnes_video_status
-    prompt.rs          agnes_enhance_prompt
-    health.rs          health_check
+    prompt.rs          prompt enhancement helper (internal, not an MCP tool)
+    health.rs          CLI health check (not an MCP tool)
   utils/               Input validation & image encoding helpers
 ```
 

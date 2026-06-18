@@ -24,6 +24,12 @@ poll_timeout_secs = 900
 # Optional directory for downloading generated assets.
 # output_dir = "./outputs"
 
+# Model identifiers. Defaults match Agnes free-tier models as of release.
+# Override only if you use a custom gateway or a newer Agnes model.
+# model_text  = "agnes-2.0-flash"
+# model_image = "agnes-image-2.1-flash"
+# model_video = "agnes-video-v2.0"
+
 # =============================================================================
 # [server] Server / transport configuration
 # =============================================================================

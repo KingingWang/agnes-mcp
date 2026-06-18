@@ -5,8 +5,9 @@
 //! - [`image`] — `agnes_generate_image` (text-to-image & image-to-image)
 //! - [`image_recognition`] — `agnes_image_recognition` (vision / image understanding)
 //! - [`video`] — `agnes_generate_video` and `agnes_video_status`
-//! - [`prompt`] — `agnes_enhance_prompt` (expand a simple prompt into a detailed one)
-//! - [`health`] — `health_check`
+//! - [`prompt`] — internal prompt-enhancement helper (NOT an MCP tool; used by
+//!   `agnes_generate_image` / `agnes_generate_video` when `enhance_prompt=true`)
+//! - [`health`] — CLI-only health check (NOT an MCP tool)
 
 pub mod agnes_client;
 pub mod chat;
@@ -119,7 +120,5 @@ pub fn create_default_registry(config: &AgnesConfig) -> Result<ToolRegistry> {
         .register(image_recognition::ImageRecognitionTool::new(client.clone()))
         .register(image::GenerateImageTool::new(client.clone()))
         .register(video::GenerateVideoTool::new(client.clone()))
-        .register(video::VideoStatusTool::new(client.clone()))
-        .register(prompt::EnhancePromptTool::new(client.clone()))
-        .register(health::HealthCheckTool::new(client)))
+        .register(video::VideoStatusTool::new(client.clone())))
 }

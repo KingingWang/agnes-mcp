@@ -92,10 +92,13 @@ impl Tool for ImageRecognitionTool {
         let detail = params
             .detail
             .as_deref()
-            .map(|d| match d.to_ascii_lowercase().as_str() {
-                "low" | "high" | "auto" => d.to_ascii_lowercase(),
-                other => other.to_string(),
-            });
+            .map(validate_detail)
+            .map(|r| {
+                r.map_err(|msg| {
+                    CallToolError::invalid_arguments("agnes_image_recognition", Some(msg))
+                })
+            })
+            .transpose()?;
 
         let user_content = build_vision_content(&params.prompt, &image_url, detail);
         messages.push(ChatMessage {
@@ -104,7 +107,7 @@ impl Tool for ImageRecognitionTool {
         });
 
         let request = ChatRequest {
-            model: AgnesClient::text_model().to_string(),
+            model: self.client.text_model().to_string(),
             messages,
             temperature: None,
             top_p: None,
@@ -128,6 +131,20 @@ impl Tool for ImageRecognitionTool {
     }
 }
 
+/// Validate a vision detail level, returning the lowercased value or an error.
+///
+/// Used by `agnes_image_recognition` to reject invalid detail values early
+/// rather than passing them to the API.
+fn validate_detail(d: &str) -> Result<String, String> {
+    let lower = d.to_ascii_lowercase();
+    match lower.as_str() {
+        "low" | "high" | "auto" => Ok(lower),
+        other => Err(format!(
+            "invalid detail '{other}'. Expected one of: low, high, auto."
+        )),
+    }
+}
+
 /// Build the OpenAI vision-style content array (a text part + an image_url part).
 fn build_vision_content(
     prompt: &str,
@@ -147,4 +164,23 @@ fn build_vision_content(
         { "type": "text", "text": prompt },
         { "type": "image_url", "image_url": serde_json::Value::Object(image_obj) }
     ])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_detail;
+
+    #[test]
+    fn detail_valid_values() {
+        for d in ["low", "high", "auto", "LOW", "High", "Auto"] {
+            assert!(validate_detail(d).is_ok(), "{d} should be valid");
+        }
+    }
+
+    #[test]
+    fn detail_invalid_values() {
+        for d in ["ultra", "medium", "", "4k", "best"] {
+            assert!(validate_detail(d).is_err(), "{d} should be invalid");
+        }
+    }
 }

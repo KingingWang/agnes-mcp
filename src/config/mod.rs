@@ -58,6 +58,9 @@ impl AppConfig {
     /// - `AGNES_MCP_PORT`               → `server.port`
     /// - `AGNES_MCP_TRANSPORT`          → `server.transport_mode`
     /// - `AGNES_MCP_LOG_LEVEL`          → `logging.level`
+    /// - `AGNES_MODEL_TEXT`             → `agnes.model_text`
+    /// - `AGNES_MODEL_IMAGE`            → `agnes.model_image`
+    /// - `AGNES_MODEL_VIDEO`            → `agnes.model_video`
     pub fn apply_env(&mut self) {
         if let Ok(key) = std::env::var("AGNES_API_KEY").or_else(|_| std::env::var("AGNES_TOKEN")) {
             if !key.is_empty() {
@@ -87,6 +90,21 @@ impl AppConfig {
         if let Ok(level) = std::env::var("AGNES_MCP_LOG_LEVEL") {
             if !level.is_empty() {
                 self.logging.level = level;
+            }
+        }
+        if let Ok(m) = std::env::var("AGNES_MODEL_TEXT") {
+            if !m.is_empty() {
+                self.agnes.model_text = m;
+            }
+        }
+        if let Ok(m) = std::env::var("AGNES_MODEL_IMAGE") {
+            if !m.is_empty() {
+                self.agnes.model_image = m;
+            }
+        }
+        if let Ok(m) = std::env::var("AGNES_MODEL_VIDEO") {
+            if !m.is_empty() {
+                self.agnes.model_video = m;
             }
         }
     }
@@ -147,9 +165,17 @@ pub struct AgnesConfig {
     #[serde(default = "default_poll_timeout")]
     pub poll_timeout_secs: f64,
 
-    /// Directory for downloading generated assets (optional).
-    #[serde(default)]
-    pub output_dir: Option<String>,
+    /// Agnes chat/text model identifier. Defaults to `MODEL_TEXT`.
+    #[serde(default = "default_model_text")]
+    pub model_text: String,
+
+    /// Agnes image generation model identifier. Defaults to `MODEL_IMAGE`.
+    #[serde(default = "default_model_image")]
+    pub model_image: String,
+
+    /// Agnes video generation model identifier. Defaults to `MODEL_VIDEO`.
+    #[serde(default = "default_model_video")]
+    pub model_video: String,
 }
 
 const fn default_request_timeout() -> u64 {
@@ -168,6 +194,21 @@ fn default_base_url() -> String {
     DEFAULT_AGNES_BASE_URL.to_string()
 }
 
+/// Default chat/text model identifier.
+fn default_model_text() -> String {
+    MODEL_TEXT.to_string()
+}
+
+/// Default image generation model identifier.
+fn default_model_image() -> String {
+    MODEL_IMAGE.to_string()
+}
+
+/// Default video generation model identifier.
+fn default_model_video() -> String {
+    MODEL_VIDEO.to_string()
+}
+
 impl Default for AgnesConfig {
     fn default() -> Self {
         Self {
@@ -176,7 +217,9 @@ impl Default for AgnesConfig {
             request_timeout_secs: default_request_timeout(),
             poll_interval_secs: default_poll_interval(),
             poll_timeout_secs: default_poll_timeout(),
-            output_dir: None,
+            model_text: default_model_text(),
+            model_image: default_model_image(),
+            model_video: default_model_video(),
         }
     }
 }
@@ -329,5 +372,43 @@ mod tests {
         assert_eq!(cfg.agnes.base_url, "https://env.example.com");
         std::env::remove_var("AGNES_API_KEY");
         std::env::remove_var("AGNES_BASE_URL");
+    }
+
+    #[test]
+    fn default_models_match_constants() {
+        let cfg = AgnesConfig::default();
+        assert_eq!(cfg.model_text, MODEL_TEXT);
+        assert_eq!(cfg.model_image, MODEL_IMAGE);
+        assert_eq!(cfg.model_video, MODEL_VIDEO);
+    }
+
+    #[test]
+    fn parse_config_with_custom_models() {
+        let f = temp_config(concat!(
+            "[agnes]\n",
+            "api_key = \"sk-test\"\n",
+            "model_text = \"custom-text\"\n",
+            "model_image = \"custom-image\"\n",
+            "model_video = \"custom-video\"\n",
+        ));
+        let cfg = AppConfig::from_file(f.path()).unwrap();
+        assert_eq!(cfg.agnes.model_text, "custom-text");
+        assert_eq!(cfg.agnes.model_image, "custom-image");
+        assert_eq!(cfg.agnes.model_video, "custom-video");
+    }
+
+    #[test]
+    fn env_overrides_models() {
+        std::env::set_var("AGNES_MODEL_TEXT", "env-text");
+        std::env::set_var("AGNES_MODEL_IMAGE", "env-image");
+        std::env::set_var("AGNES_MODEL_VIDEO", "env-video");
+        let mut cfg = AppConfig::default();
+        cfg.apply_env();
+        assert_eq!(cfg.agnes.model_text, "env-text");
+        assert_eq!(cfg.agnes.model_image, "env-image");
+        assert_eq!(cfg.agnes.model_video, "env-video");
+        std::env::remove_var("AGNES_MODEL_TEXT");
+        std::env::remove_var("AGNES_MODEL_IMAGE");
+        std::env::remove_var("AGNES_MODEL_VIDEO");
     }
 }

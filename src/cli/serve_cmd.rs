@@ -2,7 +2,6 @@
 
 use crate::cli::commands::{ConfigArgs, HealthArgs, ServeArgs};
 use crate::config::AppConfig;
-use crate::tools::create_default_registry;
 use crate::AgnesServer;
 use std::path::Path;
 
@@ -24,6 +23,15 @@ fn apply_cli_overrides(config: &mut AppConfig, args: &ServeArgs) {
     }
     if let Some(port) = args.port {
         config.server.port = port;
+    }
+    if let Some(m) = &args.model_text {
+        config.agnes.model_text.clone_from(m);
+    }
+    if let Some(m) = &args.model_image {
+        config.agnes.model_image.clone_from(m);
+    }
+    if let Some(m) = &args.model_video {
+        config.agnes.model_video.clone_from(m);
     }
 }
 
@@ -70,44 +78,20 @@ pub async fn run_serve_command(args: ServeArgs) -> Result<(), Box<dyn std::error
 
 /// Run the `health` command.
 ///
+/// Probes the Agnes API directly (does not go through the MCP tool registry,
+/// since `health_check` is no longer registered as an MCP tool).
+///
 /// # Errors
 ///
-/// Returns an error if configuration loading or the health check fails.
+/// Returns an error if configuration loading or the HTTP client fails.
 pub async fn run_health_command(args: HealthArgs) -> Result<(), Box<dyn std::error::Error>> {
     let config = load_config(&args.serve)?;
     crate::init_logging("warn")?;
 
-    // Build a registry purely to obtain a client-backed health check.
-    let registry = create_default_registry(&config.agnes)?;
-    let tools = registry.get_tools();
-    println!(
-        "Agnes MCP server: {} tools registered ({}).",
-        tools.len(),
-        tools
-            .iter()
-            .map(|t| t.name.clone())
-            .collect::<Vec<_>>()
-            .join(", ")
-    );
-
-    match registry
-        .execute_tool(
-            "health_check",
-            serde_json::json!({ "check_type": "all", "verbose": args.verbose }),
-        )
-        .await
-    {
-        Ok(result) => {
-            for block in result.content {
-                if let Ok(text) = block.as_text_content() {
-                    println!("{}", text.text);
-                }
-            }
-        }
-        Err(e) => {
-            eprintln!("health check error: {e}");
-        }
-    }
+    // Build a client directly for the probe; no tool registry needed.
+    let client = crate::tools::agnes_client::AgnesClient::new(&config.agnes)?;
+    let report = crate::tools::health::run_health_check(&client, args.verbose).await;
+    println!("{report}");
     Ok(())
 }
 
