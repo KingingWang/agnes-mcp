@@ -6,7 +6,7 @@
 //! Video task affinity: Agnes ties each video `task_id` to the API key that
 //! created it (querying with a different key is treated as a possible key
 //! leak). The client records `task_id -> key_idx` on creation and reuses the
-//! same key for every subsequent status query / poll.
+//! same key for every subsequent status query.
 //!
 //! Multi-key retry & cooldown: when an API key returns HTTP 429 (rate
 //! limited) or 401/403 (auth failure), it is cooled down for a configurable
@@ -66,8 +66,6 @@ pub struct AgnesClient {
     /// the same key that created the task (Agnes requires this).
     task_keys: RwLock<HashMap<String, usize>>,
     http: Client,
-    poll_interval: Duration,
-    poll_timeout: Duration,
     model_text: String,
     model_image: String,
     model_video: String,
@@ -112,8 +110,6 @@ impl AgnesClient {
             next_key: AtomicUsize::new(0),
             task_keys: RwLock::new(HashMap::new()),
             http,
-            poll_interval: Duration::from_secs_f64(config.poll_interval_secs.max(1.0)),
-            poll_timeout: Duration::from_secs_f64(config.poll_timeout_secs.max(1.0)),
             model_text: config.model_text.clone(),
             model_image: config.model_image.clone(),
             model_video: config.model_video.clone(),
@@ -246,18 +242,6 @@ impl AgnesClient {
     #[must_use]
     pub fn video_model(&self) -> &str {
         &self.model_video
-    }
-
-    /// The configured poll interval for async tasks.
-    #[must_use]
-    pub fn poll_interval(&self) -> Duration {
-        self.poll_interval
-    }
-
-    /// The configured poll timeout for async tasks.
-    #[must_use]
-    pub fn poll_timeout(&self) -> Duration {
-        self.poll_timeout
     }
 
     /// Issue an authenticated request using the next healthy round-robin key,

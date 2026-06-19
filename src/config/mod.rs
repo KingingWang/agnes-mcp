@@ -194,14 +194,6 @@ pub struct AgnesConfig {
     #[serde(default = "default_request_timeout")]
     pub request_timeout_secs: u64,
 
-    /// Default poll interval in seconds for asynchronous video tasks.
-    #[serde(default = "default_poll_interval")]
-    pub poll_interval_secs: f64,
-
-    /// Default poll timeout in seconds for asynchronous video tasks.
-    #[serde(default = "default_poll_timeout")]
-    pub poll_timeout_secs: f64,
-
     /// Cooldown in seconds applied to an API key after an authentication
     /// failure (HTTP 401/403). The key is skipped by the round-robin selector
     /// until the cooldown elapses. Defaults to 600 seconds (10 minutes).
@@ -240,14 +232,6 @@ const fn default_request_timeout() -> u64 {
     180
 }
 
-const fn default_poll_interval() -> f64 {
-    10.0
-}
-
-const fn default_poll_timeout() -> f64 {
-    900.0
-}
-
 const fn default_key_cooldown() -> u64 {
     600
 }
@@ -282,8 +266,6 @@ impl Default for AgnesConfig {
             api_key: None,
             api_keys: None,
             request_timeout_secs: default_request_timeout(),
-            poll_interval_secs: default_poll_interval(),
-            poll_timeout_secs: default_poll_timeout(),
             key_cooldown_secs: default_key_cooldown(),
             key_rate_limit_cooldown_secs: default_key_rate_limit_cooldown(),
             model_text: default_model_text(),
@@ -405,6 +387,23 @@ impl Default for LoggingConfig {
     }
 }
 
+/// Shared mutex used by tests that mutate process-wide environment
+/// variables. Multiple `#[test]` functions in this crate set / unset
+/// `AGNES_*` env vars and call [`AppConfig::apply_env`]; without
+/// serialization those tests race when the test runner schedules them on
+/// different threads. Acquiring this guard at the top of each
+/// env-mutating test forces them to run one at a time.
+#[cfg(test)]
+fn env_test_lock() -> std::sync::MutexGuard<'static, ()> {
+    use std::sync::{Mutex, OnceLock, PoisonError};
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    // If a previous test panicked while holding the lock, recover so that
+    // subsequent tests can still run.
+    LOCK.get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -464,6 +463,7 @@ mod tests {
 
     #[test]
     fn env_overrides() {
+        let _env = super::env_test_lock();
         std::env::set_var("AGNES_API_KEY", "sk-env");
         std::env::set_var("AGNES_BASE_URL", "https://env.example.com/");
         let mut cfg = AppConfig::default();
@@ -499,6 +499,7 @@ mod tests {
 
     #[test]
     fn env_overrides_models() {
+        let _env = super::env_test_lock();
         std::env::set_var("AGNES_MODEL_TEXT", "env-text");
         std::env::set_var("AGNES_MODEL_IMAGE", "env-image");
         std::env::set_var("AGNES_MODEL_VIDEO", "env-video");
@@ -593,6 +594,7 @@ mod tests {
 
     #[test]
     fn env_multi_keys_overrides() {
+        let _env = super::env_test_lock();
         std::env::set_var("AGNES_API_KEYS", "sk-a, sk-b , sk-c");
         let mut cfg = AppConfig::default();
         cfg.apply_env();
@@ -626,6 +628,7 @@ mod tests {
 
     #[test]
     fn env_overrides_cooldowns() {
+        let _env = super::env_test_lock();
         std::env::set_var("AGNES_KEY_COOLDOWN_SECS", "999");
         std::env::set_var("AGNES_KEY_RATE_LIMIT_COOLDOWN_SECS", "111");
         let mut cfg = AppConfig::default();
@@ -673,6 +676,7 @@ mod disabled_tools_tests {
 
     #[test]
     fn env_overrides_disabled_tools() {
+        let _env = super::env_test_lock();
         std::env::set_var(
             "AGNES_DISABLED_TOOLS",
             "agnes_generate_image, agnes_video_status",
@@ -691,6 +695,7 @@ mod disabled_tools_tests {
 
     #[test]
     fn env_disabled_tools_empty_string_keeps_default() {
+        let _env = super::env_test_lock();
         std::env::set_var("AGNES_DISABLED_TOOLS", "");
         let mut cfg = AppConfig::default();
         cfg.apply_env();
@@ -700,6 +705,7 @@ mod disabled_tools_tests {
 
     #[test]
     fn env_disabled_tools_filters_empty_entries() {
+        let _env = super::env_test_lock();
         std::env::set_var(
             "AGNES_DISABLED_TOOLS",
             "agnes_generate_image, ,  ,agnes_video_status",

@@ -24,10 +24,6 @@ api_key = "sk-YOUR_API_KEY_HERE"
 # api_keys = ["sk-KEY_1", "sk-KEY_2", "sk-KEY_3"]
 # Request timeout for synchronous endpoints (chat, image), in seconds.
 request_timeout_secs = 180
-# Poll interval for asynchronous video tasks, in seconds.
-poll_interval_secs = 10
-# Poll timeout for asynchronous video tasks, in seconds.
-poll_timeout_secs = 900
 # Cooldown (seconds) applied to an API key after an authentication failure
 # (HTTP 401/403). The key is skipped by the round-robin selector until the
 # cooldown elapses. Defaults to 600 seconds (10 minutes).

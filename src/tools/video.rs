@@ -1,5 +1,12 @@
 //! `agnes_generate_video` and `agnes_video_status` tools — asynchronous video
 //! generation with `agnes-video-v2.0`.
+//!
+//! Video generation is **asynchronous only**: `agnes_generate_video` submits a
+//! task and returns its task id immediately. The caller is responsible for
+//! polling the task with `agnes_video_status` until it completes (or forking
+//! that work off the tool's own time budget). Synchronous in-tool polling was
+//! intentionally removed because it could exceed MCP client tool-call
+//! timeouts.
 
 #![allow(clippy::missing_docs_in_private_items)]
 
@@ -15,7 +22,6 @@ use rust_mcp_sdk::schema::{CallToolError, CallToolResult, Tool as McpTool};
 use serde::{Deserialize, Serialize};
 use std::fmt::Write;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 
 // ============================================================================
 // agnes_generate_video
@@ -25,7 +31,7 @@ use std::time::{Duration, Instant};
 #[macros::mcp_tool(
     name = "agnes_generate_video",
     title = "Agnes Generate Video",
-    description = "Generate video with the Agnes-Video-V2.0 model. Supports text-to-video, image-to-video (single image), multi-image, and keyframe animation. Generation is asynchronous: by default it returns a task id immediately; set wait=true to poll until completion and return the video URL. Optional enhance_prompt: when true, expand the prompt into a rich, detailed prompt before generation. INCREASES LATENCY by one extra chat-model call; leave false if your prompt is already detailed. On failure, falls back to the original prompt. Optional save_to: download the video to this local path once the task completes (only with wait=true; use agnes_video_status with save_to otherwise).",
+    description = "Generate video with the Agnes-Video-V2.0 model. Supports text-to-video, image-to-video (single image), multi-image, and keyframe animation. Generation is asynchronous: this tool submits the task and returns a task id immediately — it never polls or blocks. Poll the result with the `agnes_video_status` tool (call it periodically until the task is done). Optional enhance_prompt: when true, expand the prompt into a rich, detailed prompt before generation. INCREASES LATENCY by one extra chat-model call; leave false if your prompt is already detailed. On failure, falls back to the original prompt.",
     destructive_hint = false,
     idempotent_hint = false,
     open_world_hint = true,
@@ -73,10 +79,6 @@ pub struct GenerateVideoToolParams {
     #[serde(default, rename = "num_inference_steps")]
     pub num_inference_steps: Option<i64>,
 
-    /// If true, poll until the task completes (or fails/times out) and return the video URL. Defaults to false (return task id immediately).
-    #[serde(default, rename = "wait")]
-    pub wait: bool,
-
     /// When true, expand `prompt` into a rich, detailed prompt via the Agnes
     /// chat model before creating the video task. INCREASES TOTAL LATENCY by
     /// one extra chat-model round trip (~1-5s). Leave false if your prompt is
@@ -84,13 +86,6 @@ pub struct GenerateVideoToolParams {
     /// prompt. Defaults to false.
     #[serde(default, rename = "enhance_prompt")]
     pub enhance_prompt: bool,
-
-    /// Optional local path to download the generated video to once the task
-    /// completes. Only honored when `wait=true` (otherwise there is no video
-    /// URL yet). Use `agnes_video_status` with `save_to` to download after
-    /// polling. Defaults to no download.
-    #[serde(default, rename = "save_to")]
-    pub save_to: Option<String>,
 }
 
 fn default_width() -> u64 {
@@ -253,8 +248,8 @@ impl Tool for GenerateVideoTool {
         };
 
         // Pin this task to the key that created it, so all subsequent status
-        // queries (via agnes_video_status or internal polling) reuse the same
-        // key. Agnes ties task ownership to the creating key.
+        // queries (via agnes_video_status) reuse the same key. Agnes ties task
+        // ownership to the creating key.
         self.client.record_task_key(&task_id, key_idx);
 
         let image_count = params.image_urls.as_ref().map_or(0, Vec::len);
@@ -265,49 +260,17 @@ impl Tool for GenerateVideoTool {
             (None, _) => "text-to-video",
         };
 
-        if !params.wait {
-            let mut msg = format!(
-                "Video task created ({mode_label}).\nTask ID: {task_id}\n\nUse the `agnes_video_status` tool with this task id (and wait=true to poll) to retrieve the result.",
-            );
-            if let Some(note) = &enhanced_note {
-                let _ = write!(msg, "\nEnhanced prompt: {note}");
-            }
-            if let Some(w) = &warning {
-                msg.push('\n');
-                msg.push_str(w);
-            }
-            return Ok(CallToolResult::text_content(vec![msg.into()]));
-        }
-
-        // Poll until completion.
-        let final_response = poll_task(
-            &self.client,
-            &task_id,
-            self.client.poll_interval(),
-            self.client.poll_timeout(),
-        )
-        .await
-        .map_err(|e| CallToolError::from_message(format!("polling task {task_id} failed: {e}")))?;
-
-        let status = extract_task_status(&final_response);
-        let video_url = extract_video_url(&final_response);
-        let mut content =
-            render_task_result(&final_response, &task_id, status, video_url.as_deref());
+        let mut msg = format!(
+            "Video task created ({mode_label}).\nTask ID: {task_id}\n\nUse the `agnes_video_status` tool with this task id (call it periodically until the task is done) to retrieve the result.",
+        );
         if let Some(note) = &enhanced_note {
-            let _ = writeln!(content, "Enhanced prompt: {note}");
+            let _ = write!(msg, "\nEnhanced prompt: {note}");
         }
         if let Some(w) = &warning {
-            content.push_str(w);
-            content.push('\n');
+            msg.push('\n');
+            msg.push_str(w);
         }
-        if let (Some(save_to), Some(url)) = (&params.save_to, video_url.as_deref()) {
-            if status == TaskStatus::Done {
-                let report = save_video(&self.client, url, save_to).await;
-                let _ = writeln!(content, "{report}");
-            }
-        }
-
-        Ok(CallToolResult::text_content(vec![content.into()]))
+        Ok(CallToolResult::text_content(vec![msg.into()]))
     }
 }
 
@@ -319,7 +282,7 @@ impl Tool for GenerateVideoTool {
 #[macros::mcp_tool(
     name = "agnes_video_status",
     title = "Agnes Video Status",
-    description = "Retrieve the status (and result, when complete) of an Agnes video generation task by its task id. Set wait=true to poll until the task completes, fails, or times out. Optional save_to: download the video to this local path once the task is complete.",
+    description = "Retrieve the status (and result, when complete) of an Agnes video generation task by its task id. This tool performs a single status check and returns immediately — it never polls or blocks. Call it periodically until the task reports `completed`. Optional save_to: download the video to this local path once the task is complete (ignored if the task has not finished or has no video URL).",
     destructive_hint = false,
     idempotent_hint = true,
     open_world_hint = true,
@@ -330,10 +293,6 @@ pub struct VideoStatusToolParams {
     /// The video task id returned by `agnes_generate_video`.
     #[serde(rename = "task_id")]
     pub task_id: String,
-
-    /// If true, poll until the task completes, fails, or times out. Defaults to false (single status check).
-    #[serde(default, rename = "wait")]
-    pub wait: bool,
 
     /// Optional local path to download the video to once the task is complete.
     /// Ignored if the task has not finished or has no video URL. Defaults to
@@ -372,31 +331,16 @@ impl Tool for VideoStatusTool {
             )
         })?;
 
-        let response = if params.wait {
-            poll_task(
-                &self.client,
-                &params.task_id,
-                self.client.poll_interval(),
-                self.client.poll_timeout(),
-            )
+        let response = self
+            .client
+            .get_video_task(&params.task_id)
             .await
             .map_err(|e| {
                 CallToolError::from_message(format!(
-                    "polling task {} failed: {}",
+                    "retrieving task {} failed: {}",
                     params.task_id, e
                 ))
-            })?
-        } else {
-            self.client
-                .get_video_task(&params.task_id)
-                .await
-                .map_err(|e| {
-                    CallToolError::from_message(format!(
-                        "retrieving task {} failed: {}",
-                        params.task_id, e
-                    ))
-                })?
-        };
+            })?;
 
         let status = extract_task_status(&response);
         let video_url = extract_video_url(&response);
@@ -417,55 +361,6 @@ impl Tool for VideoStatusTool {
 // ============================================================================
 // Shared helpers
 // ============================================================================
-
-/// Poll a video task until it reaches a terminal state or times out.
-///
-/// # Errors
-///
-/// Returns an error if the task fails or the timeout elapses.
-pub async fn poll_task(
-    client: &AgnesClient,
-    task_id: &str,
-    interval: Duration,
-    timeout: Duration,
-) -> crate::error::Result<serde_json::Value> {
-    let deadline = Instant::now() + timeout;
-
-    loop {
-        let response = client.get_video_task(task_id).await?;
-        let status = extract_task_status(&response);
-        let progress = response
-            .get("progress")
-            .or_else(|| response.get("data").and_then(|d| d.get("progress")))
-            .and_then(serde_json::Value::as_f64);
-
-        tracing::info!(
-            "video task {task_id}: status={:?} progress={progress:?}",
-            status
-        );
-
-        match status {
-            TaskStatus::Done => return Ok(response),
-            TaskStatus::Failed => {
-                let raw = response
-                    .get("status")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("failed");
-                return Err(crate::error::Error::api(format!(
-                    "video task {task_id} failed with status '{raw}'"
-                )));
-            }
-            TaskStatus::Running | TaskStatus::Unknown => {}
-        }
-
-        if Instant::now() >= deadline {
-            return Err(crate::error::Error::api(format!(
-                "timed out waiting for video task {task_id}"
-            )));
-        }
-        tokio::time::sleep(interval).await;
-    }
-}
 
 /// Render a human-readable summary of a video task response.
 #[allow(clippy::too_many_lines)]
@@ -538,9 +433,7 @@ mod tests {
             negative_prompt: None,
             seed: None,
             num_inference_steps: None,
-            wait: false,
             enhance_prompt: false,
-            save_to: None,
         };
         let body = GenerateVideoTool::build_body(&params, "test-video-model", "a cat");
         assert_eq!(body["model"], "test-video-model");
@@ -562,9 +455,7 @@ mod tests {
             negative_prompt: None,
             seed: None,
             num_inference_steps: None,
-            wait: false,
             enhance_prompt: false,
-            save_to: None,
         };
         let body = GenerateVideoTool::build_body(&params, "test-video-model", "a cat");
         assert_eq!(body["image"], "https://example.com/i.png");
@@ -586,9 +477,7 @@ mod tests {
             negative_prompt: None,
             seed: None,
             num_inference_steps: None,
-            wait: false,
             enhance_prompt: false,
-            save_to: None,
         };
         let body = GenerateVideoTool::build_body(&params, "test-video-model", "a cat");
         assert_eq!(body["extra_body"]["mode"], "keyframes");

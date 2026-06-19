@@ -10,8 +10,8 @@ Built in Rust with [`rust-mcp-sdk`](https://github.com/rust-mcp-stack/rust-mcp-s
 | --- | --- |
 | `agnes_image_recognition` | Vision / image understanding — describe, analyze, and answer questions about images. Accepts URLs, local files, or base64. Optional `detail`: `low` / `high` / `auto`. |
 | `agnes_generate_image` | Text-to-image and image-to-image with `agnes-image-2.1-flash`. Optional `enhance_prompt` (expand prompt before generation) and `save_to` (download to local path). |
-| `agnes_generate_video` | Text-to-video, image-to-video, multi-image, and keyframe animation with `agnes-video-v2.0` (async, with optional polling). Optional `enhance_prompt` and `save_to`. |
-| `agnes_video_status` | Poll or check the status of a video generation task. Optional `save_to` to download once complete. |
+| `agnes_generate_video` | Text-to-video, image-to-video, multi-image, and keyframe animation with `agnes-video-v2.0`. **Asynchronous only**: submits the task and returns a task id immediately. Optional `enhance_prompt`. Poll the result via `agnes_video_status`. |
+| `agnes_video_status` | Check the status of a video generation task (single status check, no polling). Call periodically until the task reports `completed`. Optional `save_to` to download once complete. |
 
 ## Quick start
 
@@ -50,7 +50,7 @@ Other errors (network, 5xx, other 4xx, JSON parse) **fail fast** — they are no
 
 #### Video task affinity (important)
 
-Agnes ties each video `task_id` to the API key that created it — querying with a different key is treated as a possible **key leak** by the server. This server pins every video status query (and internal polling) to the key used at creation time. As a consequence:
+Agnes ties each video `task_id` to the API key that created it — querying with a different key is treated as a possible **key leak** by the server. This server pins every video status query to the key used at creation time. As a consequence:
 
 - A video task created in **session A** (process) cannot be queried from **session B**. You'll see: `video task '...' was not created by this server session`.
 - Video status queries are **not retried across keys**, even if the bound key is in cooldown — switching keys would break Agnes task ownership.
@@ -95,7 +95,7 @@ Example Claude Desktop / Cursor `mcp.json` entry:
 | Source | Keys |
 | --- | --- |
 | Env vars | `AGNES_API_KEY` (or `AGNES_TOKEN`), `AGNES_API_KEYS`, `AGNES_BASE_URL`, `AGNES_MODEL_TEXT`, `AGNES_MODEL_IMAGE`, `AGNES_MODEL_VIDEO`, `AGNES_DISABLED_TOOLS`, `AGNES_KEY_COOLDOWN_SECS`, `AGNES_KEY_RATE_LIMIT_COOLDOWN_SECS`, `AGNES_MCP_HOST`, `AGNES_MCP_PORT`, `AGNES_MCP_TRANSPORT`, `AGNES_MCP_LOG_LEVEL` |
-| TOML `[agnes]` | `base_url`, `api_key`, `api_keys`, `model_text`, `model_image`, `model_video`, `disabled_tools`, `request_timeout_secs`, `poll_interval_secs`, `poll_timeout_secs`, `key_cooldown_secs`, `key_rate_limit_cooldown_secs` |
+| TOML `[agnes]` | `base_url`, `api_key`, `api_keys`, `model_text`, `model_image`, `model_video`, `disabled_tools`, `request_timeout_secs`, `key_cooldown_secs`, `key_rate_limit_cooldown_secs` |
 | TOML `[server]` | `name`, `host`, `port`, `transport_mode` |
 | TOML `[logging]` | `level` |
 
@@ -142,7 +142,7 @@ Both `agnes_generate_image` and `agnes_generate_video` accept an optional `enhan
 
 ### `save_to` (image / video download)
 
-`agnes_generate_image`, `agnes_generate_video`, and `agnes_video_status` accept an optional `save_to` path. When set, the generated asset is downloaded to that local path (a directory for multiple images, or a file path for a single file). For video generation, downloading only happens when the task has completed (`wait=true` on `agnes_generate_video`, or via `agnes_video_status` polling). Download failures are reported in the output but do not suppress the returned URL.
+`agnes_generate_image`, `agnes_generate_video`, and `agnes_video_status` accept an optional `save_to` path. When set, the generated asset is downloaded to that local path (a directory for multiple images, or a file path for a single file). `agnes_generate_video` is asynchronous-only and returns a task id without downloading; use `agnes_video_status` with `save_to` to download the video once the task reports `completed`. Download failures are reported in the output but do not suppress the returned URL.
 
 ## CLI
 
