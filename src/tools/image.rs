@@ -6,7 +6,7 @@
 use crate::tools::agnes_client::{collect_urls, AgnesClient};
 use crate::tools::prompt::{enhance_prompt, PromptTarget};
 use crate::tools::Tool;
-use crate::utils::{derive_filename, validate_size};
+use crate::utils::{derive_filename, resolve_image_input, validate_size};
 use async_trait::async_trait;
 use rust_mcp_sdk::macros;
 use rust_mcp_sdk::schema::{CallToolError, CallToolResult, Tool as McpTool};
@@ -19,7 +19,7 @@ use std::sync::Arc;
 #[macros::mcp_tool(
     name = "agnes_generate_image",
     title = "Agnes Generate Image",
-    description = "Generate images with the Agnes-Image-2.1-Flash model. Supports text-to-image and image-to-image (transformation/editing) by passing one or more reference image URLs. Returns generated image URLs. Use a rich prompt: [Subject] + [Scene/Environment] + [Style] + [Lighting] + [Composition] + [Quality]. Optional enhance_prompt: when true, expand the prompt into a rich, detailed prompt before generation. INCREASES LATENCY by one extra chat-model call; leave false if your prompt is already detailed. On failure, falls back to the original prompt. Optional save_to: a local directory or file path; when set, the generated image(s) are downloaded there.",
+    description = "Generate images with the Agnes-Image-2.1-Flash model. Supports text-to-image and image-to-image (transformation/editing). For image-to-image, pass one or more reference images as `image_urls`: each entry may be an http(s) URL, a local file path, a `data:` URI, or raw base64 text (local files and base64 are encoded as `data:` URIs and sent inline). Returns generated image URLs. Use a rich prompt: [Subject] + [Scene/Environment] + [Style] + [Lighting] + [Composition] + [Quality]. Optional enhance_prompt: when true, expand the prompt into a rich, detailed prompt before generation. INCREASES LATENCY by one extra chat-model call; leave false if your prompt is already detailed. On failure, falls back to the original prompt. Optional save_to: a local directory or file path; when set, the generated image(s) are downloaded there.",
     destructive_hint = false,
     idempotent_hint = false,
     open_world_hint = true,
@@ -35,7 +35,10 @@ pub struct GenerateImageToolParams {
     #[serde(default = "default_size", rename = "size")]
     pub size: String,
 
-    /// Optional reference image URL(s) for image-to-image generation. Publicly URL-accessible.
+    /// Optional reference image(s) for image-to-image generation. Each entry
+    /// may be an http(s) URL, a local file path, a `data:` URI, or raw base64
+    /// text. Local files and base64 inputs are encoded as `data:` URIs and
+    /// sent inline (no public hosting required).
     #[serde(default, rename = "image_urls")]
     pub image_urls: Option<Vec<String>>,
 
@@ -71,6 +74,26 @@ impl GenerateImageTool {
     pub fn new(client: Arc<AgnesClient>) -> Self {
         Self { client }
     }
+}
+
+/// Resolve `image_urls` entries into Agnes-API-acceptable form.
+///
+/// Each entry may be an http(s) URL (passed through unchanged), a local
+/// file path, a `data:` URI, or raw base64 text; the latter three are
+/// normalized to `data:` URIs so the API can receive them inline.
+fn resolve_image_inputs(image_urls: Option<&[String]>) -> Result<Vec<String>, CallToolError> {
+    let raw = image_urls.unwrap_or_default();
+    let mut out = Vec::with_capacity(raw.len());
+    for src in raw {
+        let resolved = resolve_image_input(src).map_err(|e| {
+            CallToolError::invalid_arguments(
+                "agnes_generate_image",
+                Some(format!("invalid image input '{src}': {e}")),
+            )
+        })?;
+        out.push(resolved);
+    }
+    Ok(out)
 }
 
 #[async_trait]
@@ -113,7 +136,10 @@ impl Tool for GenerateImageTool {
             }
         }
 
-        let image_urls = params.image_urls.unwrap_or_default();
+        // Resolve each reference image into something the Agnes API accepts:
+        // http(s) URLs pass through unchanged; local file paths, raw base64,
+        // and `data:` URIs are normalized to `data:` URIs and sent inline.
+        let image_urls = resolve_image_inputs(params.image_urls.as_deref())?;
 
         let mut extra_body = serde_json::Map::new();
         extra_body.insert(
@@ -228,5 +254,60 @@ async fn save_images(client: &AgnesClient, urls: &[String], save_to: &str) -> St
             saved.join(", "),
             errors.join("; ")
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_image_inputs_passes_through_https_urls() {
+        let inputs = vec![
+            "https://example.com/a.png".to_string(),
+            "http://example.com/b.jpg".to_string(),
+        ];
+        let resolved = resolve_image_inputs(Some(&inputs)).expect("resolve");
+        assert_eq!(resolved, inputs);
+    }
+
+    #[test]
+    fn resolve_image_inputs_passes_through_data_uri() {
+        let inputs = vec!["data:image/png;base64,AAAA".to_string()];
+        let resolved = resolve_image_inputs(Some(&inputs)).expect("resolve");
+        assert_eq!(resolved, inputs);
+    }
+
+    #[test]
+    fn resolve_image_inputs_wraps_raw_base64() {
+        let inputs = vec!["AAAA".to_string()];
+        let resolved = resolve_image_inputs(Some(&inputs)).expect("resolve");
+        assert_eq!(resolved, vec!["data:image/png;base64,AAAA".to_string()]);
+    }
+
+    #[test]
+    fn resolve_image_inputs_reads_local_file_as_data_uri() {
+        use std::io::Write;
+        let mut tmp = tempfile::Builder::new()
+            .suffix(".png")
+            .tempfile()
+            .expect("tempfile");
+        // Write a tiny valid byte sequence; content does not need to be a real PNG.
+        tmp.write_all(&[0x89, 0x50, 0x4E, 0x47]).expect("write");
+        let path = tmp.path().to_string_lossy().to_string();
+
+        let resolved = resolve_image_inputs(Some(&[path])).expect("resolve");
+        assert_eq!(resolved.len(), 1);
+        assert!(
+            resolved[0].starts_with("data:image/png;base64,"),
+            "expected data URI, got {}",
+            resolved[0]
+        );
+    }
+
+    #[test]
+    fn resolve_image_inputs_handles_none_and_empty() {
+        assert!(resolve_image_inputs(None).expect("resolve").is_empty());
+        assert!(resolve_image_inputs(Some(&[])).expect("resolve").is_empty());
     }
 }

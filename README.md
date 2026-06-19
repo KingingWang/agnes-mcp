@@ -9,7 +9,7 @@ Built in Rust with [`rust-mcp-sdk`](https://github.com/rust-mcp-stack/rust-mcp-s
 | Tool | Description |
 | --- | --- |
 | `agnes_image_recognition` | Vision / image understanding — describe, analyze, and answer questions about images. Accepts URLs, local files, or base64. Optional `detail`: `low` / `high` / `auto`. |
-| `agnes_generate_image` | Text-to-image and image-to-image with `agnes-image-2.1-flash`. Optional `enhance_prompt` (expand prompt before generation) and `save_to` (download to local path). |
+| `agnes_generate_image` | Text-to-image and image-to-image with `agnes-image-2.1-flash`. Reference images (`image_urls`) accept http(s) URLs, **local file paths**, `data:` URIs, or raw base64 (local files and base64 are encoded inline as `data:` URIs). Optional `enhance_prompt` (expand prompt before generation) and `save_to` (download to local path). |
 | `agnes_generate_video` | Text-to-video, image-to-video, multi-image, and keyframe animation with `agnes-video-v2.0`. **Asynchronous only**: submits the task and returns a task id immediately. Optional `enhance_prompt`. Poll the result via `agnes_video_status`. |
 | `agnes_video_status` | Check the status of a video generation task (single status check, no polling). Call periodically until the task reports `completed`. Optional `save_to` to download once complete. |
 
@@ -139,6 +139,17 @@ The Agnes model identifiers can be overridden via the `[agnes]` TOML section (`m
 ### `enhance_prompt` (image / video generation)
 
 Both `agnes_generate_image` and `agnes_generate_video` accept an optional `enhance_prompt` boolean (default `false`). When `true`, the chat model first expands the prompt into a rich, detailed generation prompt (subject + scene + style + lighting + composition + quality) before generation. This **adds one extra chat-model round trip (~1–5s)** — leave it `false` if your prompt is already detailed. On enhancement failure, generation falls back to the original prompt and a warning is appended to the output. When successful, the enhanced prompt is echoed for observability.
+
+### `image_urls` accepted formats (image-to-image)
+
+`agnes_generate_image` accepts a list of reference images via `image_urls`. Each entry can be any of:
+
+- **http(s) URL** — passed through unchanged: `https://example.com/ref.png`
+- **Local file path** — the file is read and encoded as a `data:` URI inline (no public hosting required): `/path/to/ref.png`
+- **`data:` URI** — passed through unchanged: `data:image/png;base64,...`
+- **Raw base64 text** — wrapped as `data:image/png;base64,<input>`
+
+This matches the Agnes API behavior, which supports `data:` URIs in `extra_body.image` for image-to-image generation. `agnes_image_recognition` also accepts the same set of input formats.
 
 ### `save_to` (image / video download)
 
