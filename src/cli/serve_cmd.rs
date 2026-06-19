@@ -43,6 +43,13 @@ fn apply_cli_overrides(config: &mut AppConfig, args: &ServeArgs) {
     if let Some(m) = &args.model_video {
         config.agnes.model_video.clone_from(m);
     }
+    // CLI --disable-tool entries merge into the disabled list (in addition to
+    // env/TOML sources). Unknown names are filtered later at registry build.
+    if !args.disable_tool.is_empty() {
+        let mut merged = config.agnes.disabled_tools.clone();
+        merged.extend(args.disable_tool.iter().cloned());
+        config.agnes.disabled_tools = merged;
+    }
 }
 
 /// Load configuration from file, env, and CLI overrides.

@@ -69,6 +69,15 @@ pub struct ServeArgs {
     /// Agnes video generation model identifier.
     #[arg(long, env = "AGNES_MODEL_VIDEO")]
     pub model_video: Option<String>,
+
+    /// Disable a built-in MCP tool by name (repeatable, e.g.
+    /// `--disable-tool agnes_generate_video --disable-tool agnes_video_status`).
+    /// Unknown names are ignored with a warning at startup. Defaults to none
+    /// (all tools enabled). Also settable via the `AGNES_DISABLED_TOOLS` env
+    /// var (comma-separated) or the `disabled_tools` TOML field; values from
+    /// all sources are merged.
+    #[arg(long = "disable-tool", value_name = "TOOL_NAME", action = clap::ArgAction::Append)]
+    pub disable_tool: Vec<String>,
 }
 
 /// Arguments for the `health` command.

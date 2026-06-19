@@ -44,6 +44,17 @@ poll_timeout_secs = 900
 # model_image = "agnes-image-2.1-flash"
 # model_video = "agnes-video-v2.0"
 
+# MCP tools to disable. By default all built-in tools are enabled. Names must
+# match the canonical tool identifiers exactly (case-sensitive); unknown names
+# are ignored with a warning at startup. Available tool names:
+#   - "agnes_image_recognition"
+#   - "agnes_generate_image"
+#   - "agnes_generate_video"
+#   - "agnes_video_status"
+# Also settable via the AGNES_DISABLED_TOOLS env var (comma-separated) or the
+# repeatable --disable-tool CLI flag; entries from all sources are merged.
+# disabled_tools = ["agnes_generate_video", "agnes_video_status"]
+
 # =============================================================================
 # [server] Server / transport configuration
 # =============================================================================

@@ -94,12 +94,41 @@ Example Claude Desktop / Cursor `mcp.json` entry:
 
 | Source | Keys |
 | --- | --- |
-| Env vars | `AGNES_API_KEY` (or `AGNES_TOKEN`), `AGNES_API_KEYS`, `AGNES_BASE_URL`, `AGNES_MODEL_TEXT`, `AGNES_MODEL_IMAGE`, `AGNES_MODEL_VIDEO`, `AGNES_KEY_COOLDOWN_SECS`, `AGNES_KEY_RATE_LIMIT_COOLDOWN_SECS`, `AGNES_MCP_HOST`, `AGNES_MCP_PORT`, `AGNES_MCP_TRANSPORT`, `AGNES_MCP_LOG_LEVEL` |
-| TOML `[agnes]` | `base_url`, `api_key`, `api_keys`, `model_text`, `model_image`, `model_video`, `request_timeout_secs`, `poll_interval_secs`, `poll_timeout_secs`, `key_cooldown_secs`, `key_rate_limit_cooldown_secs` |
+| Env vars | `AGNES_API_KEY` (or `AGNES_TOKEN`), `AGNES_API_KEYS`, `AGNES_BASE_URL`, `AGNES_MODEL_TEXT`, `AGNES_MODEL_IMAGE`, `AGNES_MODEL_VIDEO`, `AGNES_DISABLED_TOOLS`, `AGNES_KEY_COOLDOWN_SECS`, `AGNES_KEY_RATE_LIMIT_COOLDOWN_SECS`, `AGNES_MCP_HOST`, `AGNES_MCP_PORT`, `AGNES_MCP_TRANSPORT`, `AGNES_MCP_LOG_LEVEL` |
+| TOML `[agnes]` | `base_url`, `api_key`, `api_keys`, `model_text`, `model_image`, `model_video`, `disabled_tools`, `request_timeout_secs`, `poll_interval_secs`, `poll_timeout_secs`, `key_cooldown_secs`, `key_rate_limit_cooldown_secs` |
 | TOML `[server]` | `name`, `host`, `port`, `transport_mode` |
 | TOML `[logging]` | `level` |
 
 See [`config.example.toml`](config.example.toml) for a fully commented example.
+
+### Disabling tools
+
+By default every built-in MCP tool is registered and exposed to clients. If you only
+need a subset (e.g. you do not want to expose video generation), list the tool names
+to disable in `[agnes].disabled_tools`. Names must match the canonical identifiers
+exactly (case-sensitive); unknown names are ignored with a warning at startup.
+
+Available tool names:
+
+- `agnes_image_recognition`
+- `agnes_generate_image`
+- `agnes_generate_video`
+- `agnes_video_status`
+
+Configure via any of the three sources (entries from all sources are merged and
+deduped):
+
+- **TOML** (`[agnes]`):
+
+  ```toml
+  disabled_tools = ["agnes_generate_video", "agnes_video_status"]
+  ```
+
+- **Env**: `AGNES_DISABLED_TOOLS="agnes_generate_video,agnes_video_status"`
+- **CLI**: `--disable-tool agnes_generate_video --disable-tool agnes_video_status`
+  (repeatable flag).
+
+Default is empty — no tools are disabled.
 
 ## Tool parameters
 

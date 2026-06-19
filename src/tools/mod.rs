@@ -15,6 +15,49 @@ pub mod image_recognition;
 pub mod prompt;
 pub mod video;
 
+// ---------------------------------------------------------------------------
+// Built-in tool name constants
+// ---------------------------------------------------------------------------
+//
+// Every MCP tool exposed by this server has a stable string identifier. They
+// are centralized here so that:
+//   - users can reference them in `disabled_tools` config / `--disable-tool`
+//     CLI flag with the exact spelling,
+//   - the registry builder can validate / skip disabled tools without
+//     duplicating string literals,
+//   - tests and docs can iterate over the canonical list via [`AVAILABLE_TOOLS`].
+
+/// Tool name: Agnes image recognition (vision).
+pub const TOOL_IMAGE_RECOGNITION: &str = "agnes_image_recognition";
+/// Tool name: Agnes image generation (text-to-image & image-to-image).
+pub const TOOL_GENERATE_IMAGE: &str = "agnes_generate_image";
+/// Tool name: Agnes video generation (text-to-video & image-to-video).
+pub const TOOL_GENERATE_VIDEO: &str = "agnes_generate_video";
+/// Tool name: Agnes video task status polling.
+pub const TOOL_VIDEO_STATUS: &str = "agnes_video_status";
+
+/// All built-in MCP tool names exposed by this server, in registration order.
+pub const AVAILABLE_TOOLS: &[&str] = &[
+    TOOL_IMAGE_RECOGNITION,
+    TOOL_GENERATE_IMAGE,
+    TOOL_GENERATE_VIDEO,
+    TOOL_VIDEO_STATUS,
+];
+
+/// Returns `true` if `name` matches a built-in tool name.
+///
+/// # Examples
+///
+/// ```
+/// # use agnes_mcp::tools::is_tool_name;
+/// assert!(is_tool_name("agnes_generate_image"));
+/// assert!(!is_tool_name("agnes_unknown"));
+/// ```
+#[must_use]
+pub fn is_tool_name(name: &str) -> bool {
+    AVAILABLE_TOOLS.contains(&name)
+}
+
 use async_trait::async_trait;
 use rust_mcp_sdk::schema::{CallToolError, CallToolResult, Tool as McpTool};
 use std::collections::HashMap;
@@ -107,15 +150,58 @@ impl Default for ToolRegistry {
 
 /// Build the default tool registry from the Agnes configuration.
 ///
+/// Tools whose names appear in [`AgnesConfig::disabled_tools`] are skipped.
+/// Unknown names in the disabled list are ignored with a `warn!` log line so
+/// that a typo never silently disables the wrong tool. The disabled list is
+/// matched case-sensitively against the canonical tool names listed in
+/// [`AVAILABLE_TOOLS`].
+///
 /// # Errors
 ///
 /// Returns an error if the HTTP client cannot be constructed.
 pub fn create_default_registry(config: &AgnesConfig) -> Result<ToolRegistry> {
     let client = Arc::new(AgnesClient::new(config)?);
 
-    Ok(ToolRegistry::new()
-        .register(image_recognition::ImageRecognitionTool::new(client.clone()))
-        .register(image::GenerateImageTool::new(client.clone()))
-        .register(video::GenerateVideoTool::new(client.clone()))
-        .register(video::VideoStatusTool::new(client.clone())))
+    // Normalize the disabled list once: trim, drop empties, dedupe in order.
+    let mut disabled: Vec<String> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for name in &config.disabled_tools {
+        let name = name.trim();
+        if name.is_empty() {
+            continue;
+        }
+        if !is_tool_name(name) {
+            tracing::warn!(
+                "ignoring unknown tool name in disabled_tools: {name:?}                  (known tools: {})",
+                AVAILABLE_TOOLS.join(", ")
+            );
+            continue;
+        }
+        if seen.insert(name.to_string()) {
+            disabled.push(name.to_string());
+        }
+    }
+
+    if !disabled.is_empty() {
+        tracing::info!(
+            "disabling {} tool(s): {}",
+            disabled.len(),
+            disabled.join(", ")
+        );
+    }
+
+    let mut registry = ToolRegistry::new();
+    if !disabled.iter().any(|d| d == TOOL_IMAGE_RECOGNITION) {
+        registry = registry.register(image_recognition::ImageRecognitionTool::new(client.clone()));
+    }
+    if !disabled.iter().any(|d| d == TOOL_GENERATE_IMAGE) {
+        registry = registry.register(image::GenerateImageTool::new(client.clone()));
+    }
+    if !disabled.iter().any(|d| d == TOOL_GENERATE_VIDEO) {
+        registry = registry.register(video::GenerateVideoTool::new(client.clone()));
+    }
+    if !disabled.iter().any(|d| d == TOOL_VIDEO_STATUS) {
+        registry = registry.register(video::VideoStatusTool::new(client.clone()));
+    }
+    Ok(registry)
 }

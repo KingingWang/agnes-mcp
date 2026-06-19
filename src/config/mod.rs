@@ -64,6 +64,7 @@ impl AppConfig {
     /// - `AGNES_MODEL_TEXT`             → `agnes.model_text`
     /// - `AGNES_MODEL_IMAGE`            → `agnes.model_image`
     /// - `AGNES_MODEL_VIDEO`            → `agnes.model_video`
+    /// - `AGNES_DISABLED_TOOLS`         → `agnes.disabled_tools` (comma-separated)
     pub fn apply_env(&mut self) {
         // Multi-key support: AGNES_API_KEYS (comma-separated) takes precedence for
         // the multi-key pool. AGNES_API_KEY still works for single-key setups.
@@ -131,6 +132,15 @@ impl AppConfig {
         if let Ok(m) = std::env::var("AGNES_MODEL_VIDEO") {
             if !m.is_empty() {
                 self.agnes.model_video = m;
+            }
+        }
+        if let Ok(list) = std::env::var("AGNES_DISABLED_TOOLS") {
+            if !list.is_empty() {
+                self.agnes.disabled_tools = list
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect();
             }
         }
     }
@@ -214,6 +224,16 @@ pub struct AgnesConfig {
     /// Agnes video generation model identifier. Defaults to `MODEL_VIDEO`.
     #[serde(default = "default_model_video")]
     pub model_video: String,
+
+    /// MCP tool names to disable (not register with the server). Empty by
+    /// default — every built-in tool is enabled. Names are matched
+    /// case-sensitively against the canonical identifiers in
+    /// [`crate::tools::AVAILABLE_TOOLS`]. Unknown names are ignored at
+    /// registry-build time with a warning. Set via the `disabled_tools` TOML
+    /// field, the `AGNES_DISABLED_TOOLS` env var (comma-separated), or the
+    /// `--disable-tool` CLI flag (repeatable); all sources are merged.
+    #[serde(default)]
+    pub disabled_tools: Vec<String>,
 }
 
 const fn default_request_timeout() -> u64 {
@@ -269,6 +289,7 @@ impl Default for AgnesConfig {
             model_text: default_model_text(),
             model_image: default_model_image(),
             model_video: default_model_video(),
+            disabled_tools: Vec::new(),
         }
     }
 }
@@ -613,5 +634,85 @@ mod tests {
         assert_eq!(cfg.agnes.key_rate_limit_cooldown_secs, 111);
         std::env::remove_var("AGNES_KEY_COOLDOWN_SECS");
         std::env::remove_var("AGNES_KEY_RATE_LIMIT_COOLDOWN_SECS");
+    }
+}
+
+#[cfg(test)]
+mod disabled_tools_tests {
+    use super::*;
+    use std::io::Write;
+
+    fn temp_config(content: &str) -> tempfile::NamedTempFile {
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        write!(f, "{content}").unwrap();
+        f
+    }
+
+    #[test]
+    fn default_disabled_tools_empty() {
+        let cfg = AgnesConfig::default();
+        assert!(cfg.disabled_tools.is_empty());
+    }
+
+    #[test]
+    fn parse_disabled_tools_from_toml() {
+        let f = temp_config(concat!(
+            "[agnes]\n",
+            "api_key = \"sk-test\"\n",
+            "disabled_tools = [\"agnes_generate_video\", \"agnes_video_status\"]\n",
+        ));
+        let cfg = AppConfig::from_file(f.path()).unwrap();
+        assert_eq!(
+            cfg.agnes.disabled_tools,
+            vec![
+                "agnes_generate_video".to_string(),
+                "agnes_video_status".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn env_overrides_disabled_tools() {
+        std::env::set_var(
+            "AGNES_DISABLED_TOOLS",
+            "agnes_generate_image, agnes_video_status",
+        );
+        let mut cfg = AppConfig::default();
+        cfg.apply_env();
+        assert_eq!(
+            cfg.agnes.disabled_tools,
+            vec![
+                "agnes_generate_image".to_string(),
+                "agnes_video_status".to_string()
+            ]
+        );
+        std::env::remove_var("AGNES_DISABLED_TOOLS");
+    }
+
+    #[test]
+    fn env_disabled_tools_empty_string_keeps_default() {
+        std::env::set_var("AGNES_DISABLED_TOOLS", "");
+        let mut cfg = AppConfig::default();
+        cfg.apply_env();
+        assert!(cfg.agnes.disabled_tools.is_empty());
+        std::env::remove_var("AGNES_DISABLED_TOOLS");
+    }
+
+    #[test]
+    fn env_disabled_tools_filters_empty_entries() {
+        std::env::set_var(
+            "AGNES_DISABLED_TOOLS",
+            "agnes_generate_image, ,  ,agnes_video_status",
+        );
+        let mut cfg = AppConfig::default();
+        cfg.apply_env();
+        assert_eq!(
+            cfg.agnes.disabled_tools,
+            vec![
+                "agnes_generate_image".to_string(),
+                "agnes_video_status".to_string()
+            ]
+        );
+        std::env::remove_var("AGNES_DISABLED_TOOLS");
     }
 }
