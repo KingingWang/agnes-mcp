@@ -1,6 +1,6 @@
 [package]
 name = "agnes-mcp"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "Agnes AI MCP server: image recognition, text-to-image, text-to-video, and more through the Agnes API"
 authors = ["KingingWang <KingingWang@foxmail.com>"]
